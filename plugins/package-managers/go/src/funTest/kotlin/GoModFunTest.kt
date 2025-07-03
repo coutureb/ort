@@ -24,8 +24,8 @@ import io.kotest.matchers.should
 
 import java.io.File
 
-import org.ossreviewtoolkit.analyzer.collateMultipleProjects
-import org.ossreviewtoolkit.analyzer.create
+import org.ossreviewtoolkit.analyzer.analyze
+import org.ossreviewtoolkit.analyzer.getAnalyzerResult
 import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.toYaml
@@ -39,7 +39,7 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("project-with-tests/go.mod")
         val expectedResultFile = testDir.resolve("project-with-tests-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -48,7 +48,7 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("subpkg/go.mod")
         val expectedResultFile = testDir.resolve("subpkg-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -57,7 +57,7 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("no-deps/go.mod")
         val expectedResultFile = testDir.resolve("no-deps-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -66,7 +66,7 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("workspaces/go.mod")
         val expectedResultFile = testDir.resolve("workspaces-main-module-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -75,7 +75,7 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("workspaces/other-module/go.mod")
         val expectedResultFile = testDir.resolve("workspaces-sub-module-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -84,7 +84,7 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("unused-deps/go.mod")
         val expectedResultFile = testDir.resolve("unused-deps-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -93,20 +93,21 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("dangling-embed/go.mod")
         val expectedResultFile = testDir.resolve("dangling-embed-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
 
     "Project dependencies with a (relative) local module dependency are detected correctly" {
-        val definitionFileApp = testDir.resolve("submodules/app/go.mod")
-        val definitionFileUtils = testDir.resolve("submodules/utils/go.mod")
+        val projectDir = testDir.resolve("submodules")
+        val definitionFileApp = projectDir.resolve("app/go.mod")
+        val definitionFileUtils = projectDir.resolve("utils/go.mod")
         val expectedResultFile = testDir.resolve("submodules-expected-output.yml")
         val expectedDefinitionFilePathUtils = getDefinitionFilePath(definitionFileUtils)
 
-        val result = create("GoMod").collateMultipleProjects(definitionFileApp, definitionFileUtils)
+        val result = analyze(projectDir, packageManagers = setOf(GoModFactory())).getAnalyzerResult()
 
-        result.withResolvedScopes().toYaml() should matchExpectedResult(
+        result.toYaml() should matchExpectedResult(
             expectedResultFile,
             definitionFileApp,
             custom = mapOf(
@@ -120,7 +121,19 @@ class GoModFunTest : StringSpec({
         val definitionFile = testDir.resolve("go-as-dep-with-transitive-deps/go.mod")
         val expectedResultFile = testDir.resolve("go-as-dep-with-transitive-deps-expected-output.yml")
 
-        val result = create("GoMod").resolveSingleProject(definitionFile)
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
+
+        result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
+    }
+
+    "Project with a dependency which does not have a 'go.mod' file" {
+        // TODO: This test illustrates a bug in the dependency tree construction. If a package does not have a 'go.mod'
+        // file, then the dependencies of that package are accidentally omit, see
+        // https://github.com/oss-review-toolkit/ort/issues/10099.
+        val definitionFile = testDir.resolve("dep-without-go-mod-file/go.mod")
+        val expectedResultFile = testDir.resolve("dep-without-go-mod-file-expected-output.yml")
+
+        val result = GoModFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }

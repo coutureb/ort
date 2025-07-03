@@ -23,6 +23,9 @@ import io.kotest.assertions.async.shouldTimeout
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.comparables.shouldBeGreaterThanOrEqualTo
+import io.kotest.matchers.comparables.shouldBeLessThanOrEqualTo
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
@@ -42,6 +45,7 @@ import kotlinx.coroutines.runInterruptible
 import org.ossreviewtoolkit.clients.fossid.EntityResponseBody
 import org.ossreviewtoolkit.clients.fossid.FossIdRestService
 import org.ossreviewtoolkit.clients.fossid.MapResponseBody
+import org.ossreviewtoolkit.clients.fossid.PolymorphicData
 import org.ossreviewtoolkit.clients.fossid.checkDownloadStatus
 import org.ossreviewtoolkit.clients.fossid.createIgnoreRule
 import org.ossreviewtoolkit.clients.fossid.createProject
@@ -101,11 +105,11 @@ class FossIdTest : WordSpec({
         "return a comparable version" {
             val fossId = createFossId(createConfig())
 
-            val currentVersion = checkNotNull(Semver.coerce(fossId.version))
-            val minVersion = checkNotNull(Semver.coerce("2020.2"))
-            (currentVersion >= minVersion) shouldBe true
-            val minVersion2 = checkNotNull(Semver.coerce("2023.3"))
-            (currentVersion <= minVersion2) shouldBe true
+            val currentVersion = Semver.coerce(fossId.version).shouldNotBeNull()
+            val minVersion = Semver.coerce("2020.2").shouldNotBeNull()
+            currentVersion shouldBeGreaterThanOrEqualTo minVersion
+            val minVersion2 = Semver.coerce("2023.3").shouldNotBeNull()
+            currentVersion shouldBeLessThanOrEqualTo minVersion2
         }
     }
 
@@ -163,7 +167,7 @@ class FossIdTest : WordSpec({
             fossId.scan(createPackage(createIdentifier(index = 1), vcsInfo))
 
             coVerify {
-                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision)
+                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision, "")
                 service.downloadFromGit(USER, API_KEY, scanCode)
                 service.checkDownloadStatus(USER, API_KEY, scanCode)
             }
@@ -190,13 +194,13 @@ class FossIdTest : WordSpec({
             coEvery { service.downloadFromGit(USER, API_KEY, scanCode) } returns
                 EntityResponseBody(status = 1)
             coEvery { service.checkDownloadStatus(USER, API_KEY, scanCode) } returns
-                EntityResponseBody(status = 1, data = DownloadStatus.FAILED)
+                EntityResponseBody(status = 1, data = PolymorphicData(DownloadStatus.FAILED))
 
             val fossId = createFossId(config)
             fossId.scan(createPackage(createIdentifier(index = 1), vcsInfo))
 
             coVerify {
-                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision)
+                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision, "")
                 service.downloadFromGit(USER, API_KEY, scanCode)
                 service.checkDownloadStatus(USER, API_KEY, scanCode)
                 service.downloadFromGit(USER, API_KEY, scanCode)
@@ -427,7 +431,7 @@ class FossIdTest : WordSpec({
                 .expectCreateScan(projectCode, scanCode, vcsInfo, "")
                 .expectDownload(scanCode)
                 .mockFiles(scanCode)
-            coEvery { service.createProject(USER, API_KEY, projectCode, projectCode) } returns
+            coEvery { service.createProject(USER, API_KEY, projectCode, projectCode, "Created by ORT") } returns
                 MapResponseBody(status = 1, data = mapOf())
 
             val fossId = createFossId(config)
@@ -435,7 +439,7 @@ class FossIdTest : WordSpec({
             fossId.scan(createPackage(createIdentifier(index = 1), vcsInfo))
 
             coVerify {
-                service.createProject(USER, API_KEY, projectCode, projectCode)
+                service.createProject(USER, API_KEY, projectCode, projectCode, "Created by ORT")
             }
         }
 
@@ -930,7 +934,7 @@ class FossIdTest : WordSpec({
             fossId.scan(createPackage(createIdentifier(index = 1), vcsInfo))
 
             coVerify {
-                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision)
+                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision, "")
                 service.downloadFromGit(USER, API_KEY, scanCode)
                 service.checkDownloadStatus(USER, API_KEY, scanCode)
             }
@@ -975,7 +979,7 @@ class FossIdTest : WordSpec({
             )
 
             coVerify {
-                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision)
+                service.createScan(USER, API_KEY, projectCode, scanCode, vcsInfo.url, vcsInfo.revision, "")
                 service.downloadFromGit(USER, API_KEY, scanCode)
                 service.checkDownloadStatus(USER, API_KEY, scanCode)
                 service.createIgnoreRule(

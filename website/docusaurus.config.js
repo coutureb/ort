@@ -23,6 +23,7 @@ const config = {
   projectName: 'ort', // Usually your repo name.
   trailingSlash: false,
 
+  onBrokenAnchors: 'throw',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'throw',
 
@@ -52,6 +53,21 @@ const config = {
           customCss: require.resolve('./src/css/custom.css'),
         },
       }),
+    ],
+  ],
+
+  themes: [
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        hashed: true,
+        indexBlog: false,
+        docsDir: ['docs'],
+        docsRouteBasePath: ['/docs'],
+        searchResultLimits: 15,
+        searchResultContextMaxLength: 200,
+        explicitSearchResultPath: true,
+      },
     ],
   ],
 
@@ -129,23 +145,13 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} The ORT Project Authors. Built with Docusaurus.`,
+        copyright: `Copyright © ${new Date().getFullYear()} <a href="https://github.com/oss-review-toolkit/ort/graphs/contributors">The ORT Project Authors</a>.
+                    Built with <a href="https://docusaurus.io">Docusaurus</a>.`,
       },
       prism: {
         theme: lightCodeTheme,
         darkTheme: darkCodeTheme,
         additionalLanguages: ['bash', 'batch'],
-      },
-      algolia: {
-        // The application ID provided by Algolia.
-        appId: 'GBVAB0K8M8',
-
-        // The public API key, safe to commit.
-        apiKey: '4f04967a5a1f4b277d59d741a077affd',
-
-        indexName: 'oss-review-toolkit',
-        contextualSearch: true,
-        searchPagePath: 'search',
       },
     }),
 };

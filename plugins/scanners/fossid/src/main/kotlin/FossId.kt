@@ -237,9 +237,9 @@ class FossId internal constructor(
     private suspend fun getProject(projectCode: String): Project? =
         service.getProject(config.user.value, config.apiKey.value, projectCode).run {
             when {
-                error == null && data != null -> {
+                error == null && data?.value != null -> {
                     logger.info { "Project '$projectCode' exists." }
-                    data
+                    data?.value
                 }
 
                 error == "Project does not exist" && status == 0 -> {
@@ -247,7 +247,11 @@ class FossId internal constructor(
                     null
                 }
 
-                else -> throw IOException("Could not get project. Additional information : $error")
+                else -> {
+                    val errorMessage = "Could not get project '$projectCode' for user '${config.user.value}: $error'"
+                    logger.error { errorMessage }
+                    throw IOException(errorMessage)
+                }
             }
         }
 
@@ -260,7 +264,7 @@ class FossId internal constructor(
     override fun scanPackage(nestedProvenance: NestedProvenance?, context: ScanContext): ScanResult {
         val startTime = Instant.now()
 
-        // FossId actually never uses the provenance determined by the scanner, but determines the source code to
+        // FossID actually never uses the provenance determined by the scanner, but determines the source code to
         // download itself based on the passed VCS URL and revision, disregarding any VCS path.
         val pkg = context.coveredPackages.first()
         val provenance = pkg.vcsProcessed.revision.takeUnless { it.isBlank() }
@@ -278,7 +282,7 @@ class FossId internal constructor(
         }
 
         if (issueMessage != null) {
-            val issue = createAndLogIssue(descriptor.id, issueMessage, Severity.WARNING)
+            val issue = createAndLogIssue(issueMessage, Severity.WARNING)
             val summary = createSingleIssueSummary(startTime, issue = issue)
             return ScanResult(provenance, details, summary)
         }
@@ -341,10 +345,9 @@ class FossId internal constructor(
                     )
                 } else {
                     val issue = createAndLogIssue(
-                        source = descriptor.id,
-                        message = "Package '${pkg.id.toCoordinates()}' has been scanned in asynchronous mode. " +
+                        "Package '${pkg.id.toCoordinates()}' has been scanned in asynchronous mode. " +
                             "Scan results need to be inspected on the server instance.",
-                        severity = Severity.HINT
+                        Severity.HINT
                     )
                     val summary = createSingleIssueSummary(startTime, issue = issue)
 
@@ -362,10 +365,7 @@ class FossId internal constructor(
             } catch (e: IllegalStateException) {
                 e.showStackTrace()
 
-                val issue = createAndLogIssue(
-                    source = descriptor.id,
-                    message = "Failed to scan package '${pkg.id.toCoordinates()}' from $url."
-                )
+                val issue = createAndLogIssue("Failed to scan package '${pkg.id.toCoordinates()}' from $url.")
                 val summary = createSingleIssueSummary(startTime, issue = issue)
 
                 if (!config.keepFailedScans) {
@@ -683,7 +683,16 @@ class FossId internal constructor(
             .createScan(config.user.value, config.apiKey.value, projectCode, scanCode, url, revision, reference)
             .checkResponse("create scan")
 
-        val scanId = response.data?.get("scan_id")
+        val data = response.data?.value
+
+        if (data?.message != null) {
+            logger.warn {
+                "Create scan returned an error content as payload (see issue #8462)." +
+                    " Additional information: ${data.message}"
+            }
+        }
+
+        val scanId = data?.scanId
 
         requireNotNull(scanId) { "Scan could not be created. The response was: ${response.message}." }
 
@@ -751,7 +760,7 @@ class FossId internal constructor(
             val response = service.checkDownloadStatus(config.user.value, config.apiKey.value, scanCode)
                 .checkResponse("check download status")
 
-            when (response.data) {
+            when (response.data?.value) {
                 DownloadStatus.FINISHED -> return@wait true
 
                 DownloadStatus.FAILED -> error("Could not download scan: ${response.message}.")
@@ -892,7 +901,7 @@ class FossId internal constructor(
                                     snippet.id
                                 ).checkResponse("list snippets matched lines")
 
-                                val lines = checkNotNull(matchedLinesResponse.data) {
+                                val lines = checkNotNull(matchedLinesResponse.data?.value) {
                                     "Matched lines could not be listed. Response was " +
                                         "${matchedLinesResponse.message}."
                                 }

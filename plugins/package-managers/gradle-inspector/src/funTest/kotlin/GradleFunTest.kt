@@ -27,7 +27,6 @@ import io.kotest.data.row
 import io.kotest.data.table
 import io.kotest.matchers.should
 
-import org.ossreviewtoolkit.analyzer.create
 import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.plugins.versioncontrolsystems.git.GitCommand
@@ -43,8 +42,6 @@ class GradleFunTest : StringSpec() {
     private val isJava9OrAbove = Environment.JAVA_VERSION.split('.').first().toInt() >= 9
 
     private fun installGradleWrapper(version: String) {
-        println("Installing Gradle wrapper version $version.")
-
         val (gradle, wrapper) = if (Os.isWindows) {
             Pair("gradle.bat", projectDir.resolve("gradlew.bat"))
         } else {
@@ -69,7 +66,7 @@ class GradleFunTest : StringSpec() {
             val definitionFile = getAssetFile("projects/synthetic/gradle/build.gradle").toGradle()
             val expectedResultFile = getAssetFile("projects/synthetic/gradle-expected-output-root.yml")
 
-            val result = create("GradleInspector", "javaVersion" to "17")
+            val result = GradleInspectorFactory.create(javaVersion = "17")
                 .resolveSingleProject(definitionFile, resolveScopes = true)
 
             result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
@@ -82,7 +79,7 @@ class GradleFunTest : StringSpec() {
             val definitionFile = getAssetFile("projects/synthetic/gradle/app/build.gradle").toGradle()
             val expectedResultFile = getAssetFile("projects/synthetic/gradle-expected-output-app.yml")
 
-            val result = create("GradleInspector", "javaVersion" to "17")
+            val result = GradleInspectorFactory.create(javaVersion = "17")
                 .resolveSingleProject(definitionFile, resolveScopes = true)
 
             result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
@@ -95,7 +92,7 @@ class GradleFunTest : StringSpec() {
             val definitionFile = getAssetFile("projects/synthetic/gradle/lib/build.gradle").toGradle()
             val expectedResultFile = getAssetFile("projects/synthetic/gradle-expected-output-lib.yml")
 
-            val result = create("GradleInspector", "javaVersion" to "17")
+            val result = GradleInspectorFactory.create(javaVersion = "17")
                 .resolveSingleProject(definitionFile, resolveScopes = true)
 
             result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
@@ -105,7 +102,7 @@ class GradleFunTest : StringSpec() {
             val definitionFile = getAssetFile("projects/synthetic/gradle/lib-without-repo/build.gradle").toGradle()
             val expectedResultFile = getAssetFile("projects/synthetic/gradle-expected-output-lib-without-repo.yml")
 
-            val result = create("GradleInspector", "javaVersion" to "17")
+            val result = GradleInspectorFactory.create(javaVersion = "17")
                 .resolveSingleProject(definitionFile, resolveScopes = true)
 
             patchActualResult(result.toYaml()) should matchExpectedResult(expectedResultFile, definitionFile)
@@ -118,8 +115,8 @@ class GradleFunTest : StringSpec() {
             val definitionFile = getAssetFile("projects/synthetic/gradle/app/build.gradle").toGradle()
             val expectedResultFile = getAssetFile("projects/synthetic/gradle-expected-output-scopes-excludes.yml")
 
-            val result = create("GradleInspector", "javaVersion" to "17", excludedScopes = setOf("test.*"))
-                .resolveSingleProject(definitionFile, resolveScopes = true)
+            val result = GradleInspectorFactory.create(javaVersion = "17")
+                .resolveSingleProject(definitionFile, excludedScopes = setOf("test.*"), resolveScopes = true)
 
             result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
         }
@@ -132,7 +129,7 @@ class GradleFunTest : StringSpec() {
             val definitionFile = getAssetFile("projects/synthetic/gradle-unsupported-version/build.gradle").toGradle()
             val expectedResultFile = getAssetFile("projects/synthetic/gradle-expected-output-unsupported-version.yml")
 
-            val result = create("GradleInspector", "javaVersion" to "17")
+            val result = GradleInspectorFactory.create(javaVersion = "17")
                 .resolveSingleProject(definitionFile, resolveScopes = true)
 
             result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
@@ -185,7 +182,7 @@ class GradleFunTest : StringSpec() {
                 val definitionFile = getAssetFile("projects/synthetic/app/build.gradle").toGradle()
                 val expectedResultFile = getAssetFile("projects/synthetic/gradle-expected-output-app$suffix.yml")
 
-                val result = create("GradleInspector", "javaVersion" to "17")
+                val result = GradleInspectorFactory.create(javaVersion = "17")
                     .resolveSingleProject(definitionFile, resolveScopes = true)
 
                 result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)

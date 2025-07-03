@@ -22,10 +22,10 @@ package org.ossreviewtoolkit.model
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.beEmpty
+import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.haveSize
 import io.kotest.matchers.collections.shouldContain
-import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSingleElement
 import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.should
@@ -47,7 +47,7 @@ import org.ossreviewtoolkit.utils.test.readOrtResult
 class OrtResultTest : WordSpec({
     "getDependencies()" should {
         "be able to get all direct dependencies of a package" {
-            val ortResult = readOrtResult("src/test/assets/sbt-multi-project-example-expected-output.yml")
+            val ortResult = readOrtResult("/sbt-multi-project-example-expected-output.yml")
             val id = Identifier("Maven:com.typesafe.akka:akka-stream_2.12:2.5.6")
 
             val dependencies = ortResult.getDependencies(id, 1).map { it.toCoordinates() }
@@ -61,7 +61,7 @@ class OrtResultTest : WordSpec({
     }
 
     "getProjectsAndPackages()" should {
-        val ortResult = readOrtResult("src/test/assets/gradle-all-dependencies-expected-result.yml")
+        val ortResult = readOrtResult("/gradle-all-dependencies-expected-result.yml")
         val subProjectId = Identifier("Gradle:org.ossreviewtoolkit.gradle.example:lib:1.0.0")
 
         "be able to get all ids including sub-projects" {
@@ -264,7 +264,7 @@ class OrtResultTest : WordSpec({
                         excludes = Excludes(
                             paths = listOf(
                                 PathExclude(
-                                    pattern = "test/**",
+                                    pattern = "path/**",
                                     reason = PathExcludeReason.TEST_OF
                                 )
                             )
@@ -306,7 +306,7 @@ class OrtResultTest : WordSpec({
                                     Issue(
                                         message = "Included issue",
                                         source = "ScanCode",
-                                        affectedPath = "test/assets/asset.json"
+                                        affectedPath = "path/that/is/affected"
                                     )
                                 )
                             )
@@ -323,13 +323,13 @@ class OrtResultTest : WordSpec({
 
     "dependencyNavigator" should {
         "return a navigator for the dependency tree" {
-            val ortResult = readOrtResult("src/test/assets/sbt-multi-project-example-expected-output.yml")
+            val ortResult = readOrtResult("/sbt-multi-project-example-expected-output.yml")
 
             ortResult.dependencyNavigator shouldBe DependencyTreeNavigator
         }
 
         "return a navigator for the dependency graph" {
-            val ortResult = readOrtResult("src/test/assets/sbt-multi-project-example-graph.yml")
+            val ortResult = readOrtResult("/sbt-multi-project-example-graph.yml")
 
             ortResult.dependencyNavigator should beInstanceOf<DependencyGraphNavigator>()
         }
@@ -368,7 +368,7 @@ class OrtResultTest : WordSpec({
 
             val ruleViolations = ortResult.getRuleViolations(omitResolved = false, minSeverity = Severity.entries.min())
 
-            ruleViolations.map { it.rule }.shouldContainExactly("rule id")
+            ruleViolations.map { it.rule } should containExactly("rule id")
         }
 
         "drop violations which are resolved or below minSeverity if omitResolved is true and minSeverity is WARNING" {
@@ -419,7 +419,7 @@ class OrtResultTest : WordSpec({
 
             val ruleViolations = ortResult.getRuleViolations(omitResolved = true, minSeverity = Severity.WARNING)
 
-            ruleViolations.map { it.rule }.shouldContainExactly("Rule violation without resolution")
+            ruleViolations.map { it.rule } should containExactly("Rule violation without resolution")
         }
     }
 })

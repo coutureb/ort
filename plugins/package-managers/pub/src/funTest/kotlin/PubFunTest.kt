@@ -22,19 +22,17 @@ package org.ossreviewtoolkit.plugins.packagemanagers.pub
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.shouldHaveSize
-import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.string.haveSubstring
 
 import org.ossreviewtoolkit.analyzer.analyze
-import org.ossreviewtoolkit.analyzer.create
+import org.ossreviewtoolkit.analyzer.getAnalyzerResult
 import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.model.AnalyzerResult
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.collectDependencies
 import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.toYaml
-import org.ossreviewtoolkit.plugins.packagemanagers.gradleinspector.OPTION_JAVA_VERSION
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
 
@@ -48,7 +46,7 @@ class PubFunTest : WordSpec({
             }
 
             val result = try {
-                create("Pub", allowDynamicVersions = true).resolveSingleProject(definitionFile)
+                PubFactory.create().resolveSingleProject(definitionFile, allowDynamicVersions = true)
             } finally {
                 lockfile.delete()
             }
@@ -60,7 +58,7 @@ class PubFunTest : WordSpec({
             val definitionFile = getAssetFile("projects/synthetic/any-version/pubspec.yaml")
             val expectedResultFile = getAssetFile("projects/synthetic/pub-expected-output-any-version.yml")
 
-            val result = create("Pub").resolveSingleProject(definitionFile)
+            val result = PubFactory.create().resolveSingleProject(definitionFile)
 
             result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
         }
@@ -69,11 +67,9 @@ class PubFunTest : WordSpec({
             val definitionFile = getAssetFile("projects/synthetic/multi-module/pubspec.yaml")
             val expectedResultFile = getAssetFile("projects/synthetic/pub-expected-output-multi-module.yml")
 
-            val ortResult = analyze(definitionFile.parentFile)
+            val result = analyze(definitionFile.parentFile).getAnalyzerResult()
 
-            ortResult.analyzer shouldNotBeNull {
-                result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
-            }
+            result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
         }
 
         "resolve dependencies for a project with Flutter, Android and Cocoapods" {
@@ -84,23 +80,21 @@ class PubFunTest : WordSpec({
                 "projects/synthetic/pub-expected-output-with-flutter-android-and-cocoapods.yml"
             )
 
-            val ortResult = analyze(
+            val result = analyze(
                 definitionFile.parentFile,
                 packageManagerConfiguration = mapOf(
-                    "GradleInspector" to PackageManagerConfiguration(options = mapOf(OPTION_JAVA_VERSION to "17"))
+                    "GradleInspector" to PackageManagerConfiguration(options = mapOf("javaVersion" to "17"))
                 )
-            )
+            ).getAnalyzerResult()
 
-            ortResult.analyzer shouldNotBeNull {
-                result.patchPackages().reduceToPubProjects().toYaml() should
-                    matchExpectedResult(expectedResultFile, definitionFile)
-            }
+            result.patchPackages().reduceToPubProjects().toYaml() should
+                matchExpectedResult(expectedResultFile, definitionFile)
         }
 
         "show an error if no lockfile is present" {
             val definitionFile = getAssetFile("projects/synthetic/no-lockfile/pubspec.yaml")
 
-            val result = create("Pub").resolveSingleProject(definitionFile)
+            val result = PubFactory.create().resolveSingleProject(definitionFile)
 
             with(result) {
                 packages should beEmpty()

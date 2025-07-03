@@ -37,7 +37,7 @@ import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.config.AdvisorConfiguration
 import org.ossreviewtoolkit.model.vulnerabilities.Vulnerability
 import org.ossreviewtoolkit.model.vulnerabilities.VulnerabilityReference
-import org.ossreviewtoolkit.plugins.api.PluginConfig
+import org.ossreviewtoolkit.plugins.api.orEmpty
 import org.ossreviewtoolkit.utils.ort.Environment
 
 /**
@@ -80,8 +80,8 @@ class Advisor(
                 logger.info { "There are no packages to give advice for." }
             } else {
                 val providers = providerFactories.map {
-                    val providerConfig = config.config?.get(it.descriptor.id)
-                    it.create(PluginConfig(providerConfig?.options.orEmpty(), providerConfig?.secrets.orEmpty()))
+                    val providerConfig = config.advisors?.get(it.descriptor.id)
+                    it.create(providerConfig.orEmpty())
                 }
 
                 providers.map { provider ->

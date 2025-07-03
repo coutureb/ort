@@ -22,8 +22,9 @@ import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
-import HomepageFeatures from '@site/src/components/HomepageFeatures';
-
+import CommandBox from "@site/src/components/CommandBox";
+import Features from '@site/src/components/Features';
+import Toolchain from '@site/src/components/Toolchain';
 import styles from './index.module.css';
 
 function HomepageHeader() {
@@ -31,15 +32,24 @@ function HomepageHeader() {
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
       <div className="container">
-        <h1 className="hero__title">{siteConfig.title}</h1>
+        <p className='text--center'>
+          <img
+              src='img/ort.png'
+              alt='ORT Logo'
+              className={styles.heroLogo}
+          />
+        </p>
         <p className="hero__subtitle">
           {siteConfig.tagline}
           <br/>
           Also available as a <Link to="https://eclipse-apoapsis.github.io/ort-server/">server</Link>.
         </p>
+        <iframe
+          src="https://ghbtns.com/github-btn.html?user=oss-review-toolkit&repo=ort&type=star&count=true&size=large"
+          frameBorder="0" scrolling="0" width="170" height="30" title="GitHub"/>
         <div className={styles.buttons}>
           <Link
-            className="button button--secondary button--lg margin-right--lg"
+            className="button button--secondary button--lg"
             to="/docs/intro">
             Introduction
           </Link>
@@ -49,6 +59,7 @@ function HomepageHeader() {
             Getting Started
           </Link>
         </div>
+        <CommandBox command="docker run ghcr.io/oss-review-toolkit/ort --help"/>
       </div>
     </header>
   );
@@ -62,7 +73,8 @@ export default function Home() {
       description={`${siteConfig.tagline}`}>
       <HomepageHeader />
       <main>
-        <HomepageFeatures />
+        <Toolchain />
+        <Features />
       </main>
     </Layout>
   );

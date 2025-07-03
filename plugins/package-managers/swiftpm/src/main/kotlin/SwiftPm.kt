@@ -21,8 +21,8 @@ package org.ossreviewtoolkit.plugins.packagemanagers.swiftpm
 
 import java.io.File
 
-import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.downloader.VcsHost
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.Identifier
@@ -37,8 +37,11 @@ import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
-import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.config.Excludes
+import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.orEmpty
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.toUri
@@ -60,34 +63,39 @@ internal object SwiftCommand : CommandLineTool {
 /**
  * The [Swift Package Manager](https://github.com/apple/swift-package-manager).
  */
-class SwiftPm(
-    name: String,
-    analysisRoot: File,
-    analyzerConfig: AnalyzerConfiguration,
-    repoConfig: RepositoryConfiguration
-) : PackageManager(name, "SwiftPM", analysisRoot, analyzerConfig, repoConfig) {
-    class Factory : AbstractPackageManagerFactory<SwiftPm>("SwiftPM") {
-        override val globsForDefinitionFiles = listOf(PACKAGE_SWIFT_NAME, PACKAGE_RESOLVED_NAME)
+@OrtPlugin(
+    id = "SwiftPM",
+    displayName = "Swift Package Manager",
+    description = "The Swift Package Manager for Swift.",
+    factory = PackageManagerFactory::class
+)
+class SwiftPm(override val descriptor: PluginDescriptor = SwiftPmFactory.descriptor) : PackageManager("SwiftPM") {
+    override val globsForDefinitionFiles = listOf(PACKAGE_SWIFT_NAME, PACKAGE_RESOLVED_NAME)
 
-        override fun create(
-            analysisRoot: File,
-            analyzerConfig: AnalyzerConfiguration,
-            repoConfig: RepositoryConfiguration
-        ) = SwiftPm(type, analysisRoot, analyzerConfig, repoConfig)
+    override fun mapDefinitionFiles(
+        analysisRoot: File,
+        definitionFiles: List<File>,
+        analyzerConfig: AnalyzerConfiguration
+    ): List<File> {
+        return definitionFiles.filterNot { file -> ".build/checkouts" in file.path }
     }
 
-    override fun mapDefinitionFiles(definitionFiles: List<File>): List<File> {
-        return definitionFiles.filterNot { file -> file.path.contains(".build/checkouts") }
-    }
-
-    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
+    override fun resolveDependencies(
+        analysisRoot: File,
+        definitionFile: File,
+        excludes: Excludes,
+        analyzerConfig: AnalyzerConfiguration,
+        labels: Map<String, String>
+    ): List<ProjectAnalyzerResult> {
         if (definitionFile.name != PACKAGE_RESOLVED_NAME) {
-            requireLockfile(definitionFile.parentFile) { definitionFile.resolveSibling(PACKAGE_RESOLVED_NAME).isFile }
+            requireLockfile(analysisRoot, definitionFile.parentFile, analyzerConfig.allowDynamicVersions) {
+                definitionFile.resolveSibling(PACKAGE_RESOLVED_NAME).isFile
+            }
         }
 
         return when (definitionFile.name) {
-            PACKAGE_SWIFT_NAME -> resolveDefinitionFileDependencies(definitionFile)
-            else -> resolveLockfileDependencies(definitionFile)
+            PACKAGE_SWIFT_NAME -> resolveDefinitionFileDependencies(analysisRoot, definitionFile)
+            else -> resolveLockfileDependencies(analysisRoot, definitionFile)
         }
     }
 
@@ -95,7 +103,10 @@ class SwiftPm(
      * Resolves dependencies when only a lockfile aka `Package.Resolved` is available. This commonly applies to e.g.
      * Xcode projects which only have a lockfile, but no `Package.swift` file.
      */
-    private fun resolveLockfileDependencies(packageResolvedFile: File): List<ProjectAnalyzerResult> {
+    private fun resolveLockfileDependencies(
+        analysisRoot: File,
+        packageResolvedFile: File
+    ): List<ProjectAnalyzerResult> {
         val issues = mutableListOf<Issue>()
         val packages = mutableSetOf<Package>()
         val scopeDependencies = mutableSetOf<Scope>()
@@ -107,12 +118,12 @@ class SwiftPm(
                 dependencies = packages.mapTo(mutableSetOf()) { it.toReference(linkage = PackageLinkage.DYNAMIC) }
             )
         }.onFailure {
-            issues += Issue(source = managerName, message = it.message.orEmpty())
+            issues += createAndLogIssue(it.message.orEmpty())
         }
 
         return listOf(
             ProjectAnalyzerResult(
-                project = projectFromDefinitionFile(packageResolvedFile, scopeDependencies),
+                project = projectFromDefinitionFile(analysisRoot, packageResolvedFile, scopeDependencies),
                 packages = packages,
                 issues = issues
             )
@@ -124,7 +135,10 @@ class SwiftPm(
      * This method parses dependencies from `swift package show-dependencies --format json` output.
      * Also, this method provides parent-child associations for parsed dependencies.
      */
-    private fun resolveDefinitionFileDependencies(packageSwiftFile: File): List<ProjectAnalyzerResult> {
+    private fun resolveDefinitionFileDependencies(
+        analysisRoot: File,
+        packageSwiftFile: File
+    ): List<ProjectAnalyzerResult> {
         val swiftPackage = getSwiftPackage(packageSwiftFile)
 
         val issues = mutableListOf<Issue>()
@@ -139,7 +153,7 @@ class SwiftPm(
             parseLockfile(lockfile).onSuccess { pins ->
                 pins.associateByTo(pinsByIdentity) { it.identity }
             }.onFailure {
-                issues += Issue(source = managerName, message = it.message.orEmpty())
+                issues += createAndLogIssue(it.message.orEmpty())
             }
         }
 
@@ -151,7 +165,7 @@ class SwiftPm(
 
         return listOf(
             ProjectAnalyzerResult(
-                project = projectFromDefinitionFile(packageSwiftFile, scopeDependencies),
+                project = projectFromDefinitionFile(analysisRoot, packageSwiftFile, scopeDependencies),
                 packages = packages,
                 issues = issues
             )
@@ -171,7 +185,11 @@ class SwiftPm(
         return parseSwiftPackage(result)
     }
 
-    private fun projectFromDefinitionFile(definitionFile: File, scopeDependencies: Set<Scope>): Project {
+    private fun projectFromDefinitionFile(
+        analysisRoot: File,
+        definitionFile: File,
+        scopeDependencies: Set<Scope>
+    ): Project {
         val vcsInfo = VersionControlSystem.forDirectory(definitionFile.parentFile)?.getInfo().orEmpty()
 
         val projectIdentifier = Identifier(
@@ -230,7 +248,12 @@ private fun PinV2.toId(): Identifier =
     Identifier(
         type = PACKAGE_TYPE,
         namespace = "",
-        name = getCanonicalName(location),
+        // For SPM registry dependencies the `location` field is blank, so use the `identity` field instead.
+        name = if (kind == PinV2.Kind.REGISTRY) {
+            identity
+        } else {
+            getCanonicalName(location)
+        },
         version = state?.run {
             when {
                 !version.isNullOrBlank() -> version

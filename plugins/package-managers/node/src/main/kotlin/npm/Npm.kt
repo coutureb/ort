@@ -24,18 +24,22 @@ import java.util.LinkedList
 
 import org.apache.logging.log4j.kotlin.logger
 
-import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.ProjectAnalyzerResult
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
-import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
-import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
+import org.ossreviewtoolkit.plugins.packagemanagers.node.ModuleInfoResolver
 import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManager
 import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManagerType
-import org.ossreviewtoolkit.plugins.packagemanagers.node.PackageJson
+import org.ossreviewtoolkit.plugins.packagemanagers.node.Scope
+import org.ossreviewtoolkit.plugins.packagemanagers.node.getNames
 import org.ossreviewtoolkit.plugins.packagemanagers.node.parsePackageJson
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.DirectoryStash
@@ -44,67 +48,83 @@ import org.ossreviewtoolkit.utils.common.ProcessCapture
 import org.ossreviewtoolkit.utils.common.collectMessages
 import org.ossreviewtoolkit.utils.common.withoutPrefix
 
-import org.semver4j.RangesList
-import org.semver4j.RangesListFactory
+import org.semver4j.range.RangeList
+import org.semver4j.range.RangeListFactory
 
 internal object NpmCommand : CommandLineTool {
     override fun command(workingDir: File?) = if (Os.isWindows) "npm.cmd" else "npm"
 
-    override fun getVersionRequirement(): RangesList = RangesListFactory.create("6.* - 10.*")
+    override fun getVersionRequirement(): RangeList = RangeListFactory.create("6.* - 10.*")
 }
 
+data class NpmConfig(
+    /**
+     * If true, the "--legacy-peer-deps" flag is passed to NPM to ignore conflicts in peer dependencies which are
+     * reported since NPM 7. This allows to analyze NPM 6 projects with peer dependency conflicts. For more information
+     * see the [documentation](https://docs.npmjs.com/cli/v8/commands/npm-install#strict-peer-deps) and the
+     * [NPM Blog](https://blog.npmjs.org/post/626173315965468672/npm-v7-series-beta-release-and-semver-major).
+     */
+    @OrtPluginOption(defaultValue = "false")
+    val legacyPeerDeps: Boolean
+)
+
 /**
- * The [Node package manager](https://www.npmjs.com/) for JavaScript.
- *
- * This package manager supports the following [options][PackageManagerConfiguration.options]:
- * - *legacyPeerDeps*: If true, the "--legacy-peer-deps" flag is passed to NPM to ignore conflicts in peer dependencies
- *   which are reported since NPM 7. This allows to analyze NPM 6 projects with peer dependency conflicts. For more
- *   information see the [documentation](https://docs.npmjs.com/cli/v8/commands/npm-install#strict-peer-deps) and the
- *   [NPM Blog](https://blog.npmjs.org/post/626173315965468672/npm-v7-series-beta-release-and-semver-major).
+ * The [Node package manager](https://www.npmjs.com/).
  */
-class Npm(
-    name: String,
-    analysisRoot: File,
-    analyzerConfig: AnalyzerConfiguration,
-    repoConfig: RepositoryConfiguration
-) : NodePackageManager(name, NodePackageManagerType.NPM, analysisRoot, analyzerConfig, repoConfig) {
-    companion object {
-        /** Name of the configuration option to toggle legacy peer dependency support. */
-        const val OPTION_LEGACY_PEER_DEPS = "legacyPeerDeps"
-    }
+@OrtPlugin(
+    id = "NPM",
+    displayName = "NPM",
+    description = "The Node package manager for Node.js.",
+    factory = PackageManagerFactory::class
+)
+class Npm(override val descriptor: PluginDescriptor = NpmFactory.descriptor, private val config: NpmConfig) :
+    NodePackageManager(NodePackageManagerType.NPM) {
 
-    class Factory : AbstractPackageManagerFactory<Npm>("NPM") {
-        override val globsForDefinitionFiles = listOf(NodePackageManagerType.DEFINITION_FILE)
-
-        override fun create(
-            analysisRoot: File,
-            analyzerConfig: AnalyzerConfiguration,
-            repoConfig: RepositoryConfiguration
-        ) = Npm(type, analysisRoot, analyzerConfig, repoConfig)
-    }
+    override val globsForDefinitionFiles = listOf(NodePackageManagerType.DEFINITION_FILE)
 
     private lateinit var stash: DirectoryStash
 
-    private val legacyPeerDeps = options[OPTION_LEGACY_PEER_DEPS].toBoolean()
-    private val npmViewCache = mutableMapOf<String, PackageJson>()
-    private val handler = NpmDependencyHandler(projectType, this::getRemotePackageDetails)
+    private val moduleInfoResolver = ModuleInfoResolver.create { workingDir, moduleId ->
+        runCatching {
+            val process = NpmCommand.run(workingDir, "info", "--json", moduleId).requireSuccess()
+            parsePackageJson(process.stdout)
+        }.onFailure { e ->
+            logger.warn { "Error getting module info for $moduleId: ${e.message.orEmpty()}" }
+        }.getOrNull()
+    }
 
-    override val graphBuilder by lazy { DependencyGraphBuilder(handler) }
+    private val handler = NpmDependencyHandler(moduleInfoResolver)
 
-    override fun beforeResolution(definitionFiles: List<File>) {
+    override val graphBuilder = DependencyGraphBuilder(handler)
+
+    override fun beforeResolution(
+        analysisRoot: File,
+        definitionFiles: List<File>,
+        analyzerConfig: AnalyzerConfiguration
+    ) {
+        super.beforeResolution(analysisRoot, definitionFiles, analyzerConfig)
+
         NpmCommand.checkVersion()
 
         val directories = definitionFiles.mapTo(mutableSetOf()) { it.resolveSibling("node_modules") }
         stash = DirectoryStash(directories)
     }
 
-    override fun afterResolution(definitionFiles: List<File>) {
+    override fun afterResolution(analysisRoot: File, definitionFiles: List<File>) {
         stash.close()
     }
 
-    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
+    override fun resolveDependencies(
+        analysisRoot: File,
+        definitionFile: File,
+        excludes: Excludes,
+        analyzerConfig: AnalyzerConfiguration,
+        labels: Map<String, String>
+    ): List<ProjectAnalyzerResult> {
         val workingDir = definitionFile.parentFile
-        val issues = installDependencies(workingDir).toMutableList()
+        moduleInfoResolver.workingDir = workingDir
+
+        val issues = installDependencies(analysisRoot, workingDir, analyzerConfig.allowDynamicVersions).toMutableList()
 
         if (issues.any { it.severity == Severity.ERROR }) {
             val project = runCatching {
@@ -119,19 +139,17 @@ class Npm(
 
         val project = parseProject(definitionFile, analysisRoot)
         val projectModuleInfo = listModules(workingDir, issues).undoDeduplication()
+        val scopes = Scope.entries.filterNotTo(mutableSetOf()) { scope -> scope.isExcluded(excludes) }
 
-        val scopeNames = Scope.entries
-            .filterNot { excludes.isScopeExcluded(it.descriptor) }
-            .mapTo(mutableSetOf()) { scope ->
-                val scopeName = scope.descriptor
+        // Warm-up the cache to speed-up processing.
+        requestAllPackageDetails(projectModuleInfo, scopes)
 
-                graphBuilder.addDependencies(project.id, scopeName, projectModuleInfo.getScopeDependencies(scope))
-
-                scopeName
-            }
+        scopes.forEach { scope ->
+            graphBuilder.addDependencies(project.id, scope.descriptor, projectModuleInfo.getScopeDependencies(scope))
+        }
 
         return ProjectAnalyzerResult(
-            project = project.copy(scopeNames = scopeNames),
+            project = project.copy(scopeNames = scopes.getNames()),
             packages = emptySet(),
             issues = issues
         ).let { listOf(it) }
@@ -144,27 +162,13 @@ class Npm(
         return parseNpmList(listProcess.stdout)
     }
 
-    internal fun getRemotePackageDetails(packageName: String): PackageJson? {
-        npmViewCache[packageName]?.let { return it }
-
-        return runCatching {
-            val process = NpmCommand.run("info", "--json", packageName).requireSuccess()
-
-            parsePackageJson(process.stdout)
-        }.onFailure { e ->
-            logger.warn { "Error getting details for $packageName: ${e.message.orEmpty()}" }
-        }.onSuccess {
-            npmViewCache[packageName] = it
-        }.getOrNull()
-    }
-
-    private fun installDependencies(workingDir: File): List<Issue> {
-        requireLockfile(workingDir) { managerType.hasLockfile(workingDir) }
+    private fun installDependencies(analysisRoot: File, workingDir: File, allowDynamicVersions: Boolean): List<Issue> {
+        requireLockfile(analysisRoot, workingDir, allowDynamicVersions) { managerType.hasLockfile(workingDir) }
 
         val options = listOfNotNull(
             "--ignore-scripts",
             "--no-audit",
-            "--legacy-peer-deps".takeIf { legacyPeerDeps }
+            "--legacy-peer-deps".takeIf { config.legacyPeerDeps }
         )
 
         val subcommand = if (managerType.hasLockfile(workingDir)) "ci" else "install"
@@ -173,12 +177,29 @@ class Npm(
 
         return process.extractNpmIssues()
     }
+
+    private fun requestAllPackageDetails(projectModuleInfo: ModuleInfo, scopes: Set<Scope>) {
+        projectModuleInfo.getAllPackageNodeModuleIds(scopes).let { moduleIds ->
+            moduleInfoResolver.getModuleInfos(moduleIds)
+        }
+    }
 }
 
-private enum class Scope(val descriptor: String) {
-    DEPENDENCIES("dependencies"),
-    DEV_DEPENDENCIES("devDependencies")
-}
+private fun ModuleInfo.getAllPackageNodeModuleIds(scopes: Set<Scope>): Set<String> =
+    buildSet {
+        val queue = scopes.flatMapTo(LinkedList()) { getScopeDependencies(it) }
+
+        while (queue.isNotEmpty()) {
+            val info = queue.removeFirst()
+
+            @Suppress("ComplexCondition")
+            if (!info.isProject && info.isInstalled && !info.name.isNullOrBlank() && !info.version.isNullOrBlank()) {
+                add("${info.name}@${info.version}")
+            }
+
+            scopes.flatMapTo(queue) { info.getScopeDependencies(it) }
+        }
+    }
 
 private fun ModuleInfo.getScopeDependencies(scope: Scope) =
     when (scope) {
@@ -292,19 +313,19 @@ internal fun List<String>.groupLines(vararg markers: String): List<String> {
     }
 }
 
-internal fun ProcessCapture.extractNpmIssues(): List<Issue> {
+private fun ProcessCapture.extractNpmIssues(): List<Issue> {
     val lines = stderr.lines()
     val issues = mutableListOf<Issue>()
 
     // Generally forward issues from the NPM CLI to the ORT NPM package manager. Lower the severity of warnings to
     // hints, as warnings usually do not prevent the ORT NPM package manager from getting the dependencies right.
     lines.groupLines("npm WARN ", "npm warn ").mapTo(issues) {
-        Issue(source = "NPM", message = it, severity = Severity.HINT)
+        Issue(source = NpmFactory.descriptor.displayName, message = it, severity = Severity.HINT)
     }
 
     // For errors, however, something clearly went wrong, so keep the severity here.
     lines.groupLines("npm ERR! ", "npm error ").mapTo(issues) {
-        Issue(source = "NPM", message = it, severity = Severity.ERROR)
+        Issue(source = NpmFactory.descriptor.displayName, message = it, severity = Severity.ERROR)
     }
 
     return issues

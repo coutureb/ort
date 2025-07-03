@@ -22,7 +22,7 @@ package org.ossreviewtoolkit.utils.ort
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.inspectors.forAll
 import io.kotest.matchers.collections.beEmpty
-import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.shouldHaveSingleElement
 import io.kotest.matchers.nulls.beNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -47,6 +47,10 @@ import org.apache.logging.log4j.kotlin.CoroutineThreadContext
 import org.apache.logging.log4j.kotlin.withLoggingContext
 
 class UtilsTest : WordSpec({
+    afterEach {
+        unmockkAll()
+    }
+
     "filterVersionNames" should {
         "return an empty list for a blank version" {
             val names = listOf("dummy")
@@ -256,7 +260,7 @@ class UtilsTest : WordSpec({
                 "v3.9.0.99"
             )
 
-            filterVersionNames("3.9.0.99", names).shouldContainExactly("3.9.0.99-a3d9827", "sdk-3.9.0.99", "v3.9.0.99")
+            filterVersionNames("3.9.0.99", names) should containExactly("3.9.0.99-a3d9827", "sdk-3.9.0.99", "v3.9.0.99")
         }
 
         "find names that match the version without an ignorable suffix" {
@@ -266,7 +270,7 @@ class UtilsTest : WordSpec({
                 "6.2.10"
             )
 
-            filterVersionNames("6.2.9.Final", names).shouldContainExactly("6.2.9")
+            filterVersionNames("6.2.9.Final", names) should containExactly("6.2.9")
         }
     }
 
@@ -437,21 +441,56 @@ class UtilsTest : WordSpec({
             mockkObject(OrtProxySelector)
             mockkStatic(Authenticator::class)
 
-            try {
-                val passwordAuth = mockk<PasswordAuthentication>()
+            val passwordAuth = mockk<PasswordAuthentication>()
 
-                every {
-                    Authenticator.requestPasswordAuthentication(host, null, port, scheme, null, null)
-                } returns passwordAuth
+            every {
+                Authenticator.requestPasswordAuthentication(
+                    host,
+                    null,
+                    port,
+                    scheme,
+                    null,
+                    null,
+                    null,
+                    Authenticator.RequestorType.SERVER
+                )
+            } returns passwordAuth
 
-                requestPasswordAuthentication(host, port, scheme) shouldBe passwordAuth
+            requestPasswordAuthentication(host, port, scheme) shouldBe passwordAuth
 
-                verify {
-                    OrtAuthenticator.install()
-                    OrtProxySelector.install()
-                }
-            } finally {
-                unmockkAll()
+            verify {
+                OrtAuthenticator.install()
+                OrtProxySelector.install()
+            }
+        }
+
+        "return a correct authentication object for a URL" {
+            val url = URI.create("https://www.example.org:442/auth/test")
+
+            mockkObject(OrtAuthenticator)
+            mockkObject(OrtProxySelector)
+            mockkStatic(Authenticator::class)
+
+            val passwordAuth = mockk<PasswordAuthentication>()
+
+            every {
+                Authenticator.requestPasswordAuthentication(
+                    "www.example.org",
+                    null,
+                    442,
+                    "https",
+                    null,
+                    null,
+                    url.toURL(),
+                    Authenticator.RequestorType.SERVER
+                )
+            } returns passwordAuth
+
+            requestPasswordAuthentication(url) shouldBe passwordAuth
+
+            verify {
+                OrtAuthenticator.install()
+                OrtProxySelector.install()
             }
         }
 

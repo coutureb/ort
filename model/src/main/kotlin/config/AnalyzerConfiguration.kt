@@ -19,10 +19,18 @@
 
 package org.ossreviewtoolkit.model.config
 
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonInclude
+
+import com.sksamuel.hoplite.ConfigAlias
 
 import org.ossreviewtoolkit.utils.common.zip
 
+/**
+ * The configuration model of the analyzer. This class is (de-)serialized in the following places:
+ * - Deserialized from "config.yml" as part of [OrtConfiguration] (via Hoplite).
+ * - (De-)Serialized as part of [org.ossreviewtoolkit.model.OrtResult] (via Jackson).
+ */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class AnalyzerConfiguration(
     /**
@@ -38,7 +46,34 @@ data class AnalyzerConfiguration(
      * A list of the case-insensitive names of package managers that are enabled. Disabling a package manager in
      * [disabledPackageManagers] overrides enabling it here.
      */
-    val enabledPackageManagers: List<String>? = null,
+    val enabledPackageManagers: List<String> = listOf(
+        "Bazel",
+        "Bower",
+        "Bundler",
+        "Cargo",
+        "Carthage",
+        "CocoaPods",
+        "Composer",
+        "Conan",
+        "GoMod",
+        "GradleInspector",
+        "Maven",
+        "NPM",
+        "NuGet",
+        "PIP",
+        "Pipenv",
+        "PNPM",
+        "Poetry",
+        "Pub",
+        "SBT",
+        "SpdxDocumentFile",
+        "Stack",
+        "SwiftPM",
+        "Tycho",
+        "Unmanaged",
+        "Yarn",
+        "Yarn2"
+    ),
 
     /**
      * A list of the case-insensitive names of package managers that are disabled. Disabling a package manager in this
@@ -50,6 +85,8 @@ data class AnalyzerConfiguration(
      * Package manager specific configurations. The key needs to match the name of the package manager class, e.g.
      * "NuGet" for the NuGet package manager.
      */
+    @ConfigAlias("analyzers")
+    @JsonAlias("analyzers")
     val packageManagers: Map<String, PackageManagerConfiguration>? = null,
 
     /**

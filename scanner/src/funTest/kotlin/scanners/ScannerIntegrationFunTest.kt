@@ -20,7 +20,7 @@
 package org.ossreviewtoolkit.scanner.scanners
 
 import io.kotest.core.spec.style.WordSpec
-import io.kotest.matchers.should
+import io.kotest.matchers.shouldBe
 
 import java.io.File
 
@@ -39,6 +39,7 @@ import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
+import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.DownloaderConfiguration
 import org.ossreviewtoolkit.model.config.ScannerConfiguration
 import org.ossreviewtoolkit.model.toYaml
@@ -54,9 +55,9 @@ import org.ossreviewtoolkit.scanner.provenance.DummyNestedProvenanceStorage
 import org.ossreviewtoolkit.scanner.provenance.DummyProvenanceStorage
 import org.ossreviewtoolkit.utils.common.VCS_DIRECTORIES
 import org.ossreviewtoolkit.utils.spdx.SpdxConstants
-import org.ossreviewtoolkit.utils.test.getAssetFile
-import org.ossreviewtoolkit.utils.test.matchExpectedResult
 import org.ossreviewtoolkit.utils.test.patchActualResult
+import org.ossreviewtoolkit.utils.test.patchExpectedResult
+import org.ossreviewtoolkit.utils.test.readResource
 
 class ScannerIntegrationFunTest : WordSpec({
     "Scanning all packages corresponding to a single VCS" should {
@@ -64,39 +65,39 @@ class ScannerIntegrationFunTest : WordSpec({
         val ortResult = createScanner().scan(analyzerResult, skipExcluded = false, emptyMap())
 
         "return the expected ORT result" {
-            val expectedResultFile = getAssetFile("scanner-integration-all-pkgs-expected-ort-result.yml")
+            val expectedResult = readResource("/scanner-integration-all-pkgs-expected-ort-result.yml")
 
-            patchActualResult(ortResult.toYaml(), patchStartAndEndTime = true) should
-                matchExpectedResult(expectedResultFile)
+            patchActualResult(ortResult.toYaml(), patchStartAndEndTime = true) shouldBe
+                patchExpectedResult(expectedResult)
         }
 
         "return the expected (merged) scan results" {
-            val expectedResultFile = getAssetFile("scanner-integration-expected-scan-results.yml")
+            val expectedResult = readResource("/scanner-integration-expected-scan-results.yml")
 
             val scanResults = ortResult.getScanResults().toSortedMap()
 
-            patchActualResult(scanResults.toYaml(), patchStartAndEndTime = true) should
-                matchExpectedResult(expectedResultFile)
+            patchActualResult(scanResults.toYaml(), patchStartAndEndTime = true) shouldBe
+                patchExpectedResult(expectedResult)
         }
 
         "return the expected (merged) file lists" {
-            val expectedResultFile = getAssetFile("scanner-integration-expected-file-lists.yml")
+            val expectedResult = readResource("/scanner-integration-expected-file-lists.yml")
 
             val fileLists = ortResult.getFileLists().toSortedMap()
 
-            fileLists.toYaml() should matchExpectedResult(expectedResultFile)
+            fileLists.toYaml() shouldBe patchExpectedResult(expectedResult)
         }
     }
 
     "Scanning a subset of the packages corresponding to a single VCS" should {
         "return the expected ORT result" {
             val analyzerResult = createAnalyzerResult(pkg1, pkg3)
-            val expectedResultFile = getAssetFile("scanner-integration-subset-pkgs-expected-ort-result.yml")
+            val expectedResult = readResource("/scanner-integration-subset-pkgs-expected-ort-result.yml")
 
             val ortResult = createScanner().scan(analyzerResult, skipExcluded = false, emptyMap())
 
-            patchActualResult(ortResult.toYaml(), patchStartAndEndTime = true) should
-                matchExpectedResult(expectedResultFile)
+            patchActualResult(ortResult.toYaml(), patchStartAndEndTime = true) shouldBe
+                patchExpectedResult(expectedResult)
         }
     }
 })
@@ -141,7 +142,8 @@ private fun createAnalyzerResult(vararg packages: Package): OrtResult {
         result = AnalyzerResult.EMPTY.copy(
             projects = setOf(project),
             packages = packages.toSet()
-        )
+        ),
+        config = AnalyzerConfiguration(enabledPackageManagers = emptyList())
     )
 
     return OrtResult.EMPTY.copy(analyzer = analyzerRun)

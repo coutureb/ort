@@ -35,7 +35,7 @@ import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.plugins.api.PluginConfig
 
 class GitWorkingTreeFunTest : StringSpec({
-    val git = GitFactory().create(PluginConfig())
+    val git = GitFactory().create(PluginConfig.EMPTY)
     val repoDir = tempdir()
     val vcsInfo = VcsInfo(
         type = VcsType.GIT,
@@ -46,7 +46,6 @@ class GitWorkingTreeFunTest : StringSpec({
     lateinit var workingTree: WorkingTree
 
     beforeSpec {
-        println("Cloning ${vcsInfo.url} to '$repoDir'...")
         workingTree = git.initWorkingTree(repoDir, vcsInfo)
         git.updateWorkingTree(workingTree, "main")
     }
@@ -85,7 +84,7 @@ class GitWorkingTreeFunTest : StringSpec({
             "plugins/package-managers/pub/src/funTest/assets/projects/external/dart-http",
             "plugins/package-managers/python/src/funTest/assets/projects/external/example-python-flask",
             "plugins/package-managers/python/src/funTest/assets/projects/external/spdx-tools-python",
-            "plugins/package-managers/sbt/src/funTest/assets/projects/external/sbt-multi-project-example",
+            "plugins/package-managers/sbt/src/funTest/assets/projects/external/multi-project",
             "plugins/package-managers/stack/src/funTest/assets/projects/external/quickcheck-state-machine"
         ).associateWith { VersionControlSystem.getPathInfo(File("../../../$it")) }
 

@@ -214,7 +214,7 @@ data class OrtResult(
     /**
      * Return the list of [AdvisorResult]s for the given [id].
      */
-    @Suppress("UNUSED")
+    @Suppress("unused")
     fun getAdvisorResultsForId(id: Identifier): List<AdvisorResult> = advisorResultsById[id].orEmpty()
 
     /**
@@ -375,7 +375,7 @@ data class OrtResult(
      * [omitExcluded] is set to true, excluded projects / packages are omitted from the result. Projects are converted
      * to packages in the result. If no analyzer result is present an empty set is returned.
      */
-    @Suppress("UNUSED") // This is intended to be mostly used via scripting.
+    @Suppress("unused") // This is intended to be mostly used via scripting.
     fun getOrgPackages(vararg names: String, omitExcluded: Boolean = false): Set<Package> {
         val vendorPackages = mutableSetOf<Package>()
 
@@ -665,16 +665,6 @@ data class OrtResult(
                         it.copy(curations = config.curations.packages)
                     }
                 }
-            )
-        )
-
-    /**
-     * Resolves the scopes of all [Project]s in this [OrtResult] with [Project.withResolvedScopes].
-     */
-    fun withResolvedScopes(): OrtResult =
-        copy(
-            analyzer = analyzer?.copy(
-                result = analyzer.result.withResolvedScopes()
             )
         )
 }

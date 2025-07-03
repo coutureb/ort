@@ -47,7 +47,7 @@ import org.ossreviewtoolkit.utils.ort.requestPasswordAuthentication
 
 class GitTest : WordSpec({
     // Make sure that the initialization logic runs.
-    val git = GitFactory().create(PluginConfig())
+    val git = GitFactory().create(PluginConfig.EMPTY)
 
     var originalCredentialsProvider: CredentialsProvider? = null
     var originalAuthenticator: Authenticator? = null
@@ -69,7 +69,7 @@ class GitTest : WordSpec({
     "Git" should {
         "be able to get the version" {
             val version = git.getVersion()
-            println("Git version $version detected.")
+
             version shouldNot beEmpty()
         }
 

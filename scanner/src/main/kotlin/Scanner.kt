@@ -42,7 +42,6 @@ import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.PackageType
 import org.ossreviewtoolkit.model.ProvenanceResolutionResult
 import org.ossreviewtoolkit.model.ScanResult
-import org.ossreviewtoolkit.model.ScanSummary
 import org.ossreviewtoolkit.model.ScannerRun
 import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.VcsInfo
@@ -149,6 +148,7 @@ class Scanner(
             config = scannerConfig,
             provenances = projectResults.provenances + packageResults.provenances,
             scanResults = projectResults.scanResults + packageResults.scanResults,
+            issues = projectResults.issues + packageResults.issues,
             files = projectResults.files + packageResults.files,
             scanners = projectResults.scanners + packageResults.scanners
         )
@@ -234,12 +234,15 @@ class Scanner(
         val scannerIds = scannerWrappers.mapTo(mutableSetOf()) { it.descriptor.id }
         val scanners = packages.associateBy({ it.id }) { scannerIds }
 
+        val issues = controller.getIssues()
+
         return ScannerRun.EMPTY.copy(
             config = scannerConfig,
             provenances = provenances,
             scanResults = scanResults,
             files = files,
-            scanners = scanners
+            scanners = scanners,
+            issues = issues
         )
     }
 
@@ -318,7 +321,8 @@ class Scanner(
                     if (!hasNestedProvenance) {
                         logger.debug {
                             "Skipping scan of '${pkg.id.toCoordinates()}' with package scanner " +
-                                "'${scanner.descriptor.id}' as no nested provenance for the package could be resolved."
+                                "'${scanner.descriptor.displayName}' as no nested provenance for the package could " +
+                                "be resolved."
                         }
                     }
 
@@ -326,7 +330,7 @@ class Scanner(
                     if (hasCompleteScanResult) {
                         logger.debug {
                             "Skipping scan of '${pkg.id.toCoordinates()}' with package scanner " +
-                                "'${scanner.descriptor.id}' as stored results are available."
+                                "'${scanner.descriptor.displayName}' as stored results are available."
                         }
                     }
 
@@ -335,7 +339,8 @@ class Scanner(
 
                 if (packagesWithIncompleteScanResult.isEmpty()) {
                     logger.info {
-                        "Skipping scan with package scanner '${scanner.descriptor.id}' as all packages have results."
+                        "Skipping scan with package scanner '${scanner.descriptor.displayName}' as all packages have " +
+                            "results."
                     }
 
                     return@scanner
@@ -353,14 +358,15 @@ class Scanner(
 
                 logger.info {
                     val coveredCoordinates = adjustedContext.coveredPackages.joinToString { it.id.toCoordinates() }
-                    "Starting scan of ${nestedProvenance.root} with package scanner '${scanner.descriptor.id}' which " +
-                        "covers the following packages: $coveredCoordinates"
+                    "Starting scan of ${nestedProvenance.root} with package scanner " +
+                        "'${scanner.descriptor.displayName}' which covers the following packages: $coveredCoordinates"
                 }
 
                 val scanResult = scanner.scanPackage(nestedProvenance, adjustedContext)
 
                 logger.info {
-                    "Finished scan of ${nestedProvenance.root} with package scanner '${scanner.descriptor.id}'."
+                    "Finished scan of ${nestedProvenance.root} with package scanner " +
+                        "'${scanner.descriptor.displayName}'."
                 }
 
                 val provenanceScanResultsToStore = mutableSetOf<Pair<KnownProvenance, ScanResult>>()
@@ -400,7 +406,7 @@ class Scanner(
                 if (controller.hasScanResult(scanner, provenance)) {
                     logger.debug {
                         "Skipping $provenance scan (${index + 1} of ${provenances.size}) with provenance scanner " +
-                            "'${scanner.descriptor.id}' as a result is already available."
+                            "'${scanner.descriptor.displayName}' as a result is already available."
                     }
 
                     return@scanner
@@ -408,7 +414,7 @@ class Scanner(
 
                 logger.info {
                     "Scanning $provenance (${index + 1} of ${provenances.size}) with provenance scanner " +
-                        "'${scanner.descriptor.id}'."
+                        "'${scanner.descriptor.displayName}'."
                 }
 
                 // Filter the scan context to hide the excludes from scanner with scan matcher.
@@ -449,7 +455,7 @@ class Scanner(
 
             logger.info { "Scanning $provenance (${index + 1} of ${provenances.size})..." }
 
-            val scanResults = scanPath(provenance, scannersWithoutResults, context)
+            val scanResults = scanPath(provenance, scannersWithoutResults, context, controller)
 
             scanResults.forEach { (scanner, scanResult) ->
                 val completedPackages = controller.getPackagesCompletedByProvenance(scanner, provenance)
@@ -505,7 +511,7 @@ class Scanner(
         controller.scanners.forEach { scanner ->
             val results = controller.getScanResults(scanner)
             logger.info {
-                "\t${scanner.descriptor.id}: Result(s) for ${results.size} of ${allKnownProvenances.size} " +
+                "\t${scanner.descriptor.displayName}: Result(s) for ${results.size} of ${allKnownProvenances.size} " +
                     "provenance(s)."
             }
         }
@@ -570,7 +576,8 @@ class Scanner(
     private fun scanPath(
         provenance: KnownProvenance,
         scanners: List<PathScannerWrapper>,
-        context: ScanContext
+        context: ScanContext,
+        controller: ScanController
     ): Map<PathScannerWrapper, ScanResult> {
         val downloadDir = try {
             provenanceDownloader.download(provenance)
@@ -579,58 +586,54 @@ class Scanner(
                 "Downloader", "Could not download provenance $provenance: ${e.collectMessages()}"
             )
 
-            val time = Instant.now()
-            val summary = ScanSummary(
-                startTime = time,
-                endTime = time,
-                issues = listOf(issue)
-            )
-
-            return scanners.associateWith { scanner ->
-                ScanResult(
-                    provenance = provenance,
-                    scanner = scanner.details,
-                    summary = summary
+            controller.getIdsByProvenance().getValue(provenance).forEach { id ->
+                controller.addIssue(
+                    id,
+                    issue
                 )
             }
+
+            return emptyMap()
         }
 
-        val results = scanners.associateWith { scanner ->
-            logger.info { "Scan of $provenance with path scanner '${scanner.descriptor.id}' started." }
+        val results = scanners.mapNotNull { scanner ->
+            logger.info { "Scan of $provenance with path scanner '${scanner.descriptor.displayName}' started." }
 
             // Filter the scan context to hide the excludes from scanner with scan matcher.
             val filteredContext = if (scanner.matcher == null) context else context.copy(excludes = null)
 
             val summary = runCatching {
                 scanner.scanPath(downloadDir, filteredContext)
-            }.getOrElse { e ->
-                val issue = createAndLogIssue(
-                    scanner.descriptor.id,
-                    "Failed to scan $provenance with path scanner '${scanner.descriptor.id}': ${e.collectMessages()}"
+            }.onFailure { e ->
+                val issue = scanner.createAndLogIssue(
+                    "Failed to scan $provenance with path scanner '${scanner.descriptor.displayName}': " +
+                        e.collectMessages()
                 )
 
-                val time = Instant.now()
-                ScanSummary(
-                    startTime = time,
-                    endTime = time,
-                    issues = listOf(issue)
-                )
-            }
-
-            logger.info { "Scan of $provenance with path scanner '${scanner.descriptor.id}' finished." }
-
-            val summaryWithMappedLicenses = summary.copy(
-                licenseFindings = summary.licenseFindings.mapTo(mutableSetOf()) {
-                    val licenseString = it.license.toString()
-                    it.copy(
-                        license = licenseString.mapLicense(scannerConfig.detectedLicenseMapping).toSpdx(),
-                        location = it.location.withRelativePath(downloadDir)
+                controller.getIdsByProvenance().getValue(provenance).forEach { id ->
+                    controller.addIssue(
+                        id,
+                        issue
                     )
                 }
-            )
+            }.getOrNull()
 
-            ScanResult(provenance, scanner.details, summaryWithMappedLicenses)
-        }
+            logger.info { "Scan of $provenance with path scanner '${scanner.descriptor.displayName}' finished." }
+
+            summary?.let {
+                val summaryWithMappedLicenses = summary.copy(
+                    licenseFindings = summary.licenseFindings.mapTo(mutableSetOf()) { finding ->
+                        val licenseString = finding.license.toString()
+                        finding.copy(
+                            license = licenseString.mapLicense(scannerConfig.detectedLicenseMapping).toSpdx(),
+                            location = finding.location.withRelativePath(downloadDir)
+                        )
+                    }
+                )
+
+                scanner to ScanResult(provenance, scanner.details, summaryWithMappedLicenses)
+            }
+        }.toMap()
 
         downloadDir.safeDeleteRecursively()
 
@@ -800,7 +803,7 @@ private fun ScanController.getSubRepositories(id: Identifier): Map<String, VcsIn
 private fun ProvenanceResolutionResult.filterByVcsPath(): ProvenanceResolutionResult =
     copy(
         subRepositories = subRepositories.filter { (path, _) ->
-            File(path).startsWith(packageProvenance?.vcsPath.orEmpty())
+            File(path).startsWith(packageProvenance.vcsPath)
         }
     )
 

@@ -20,6 +20,7 @@
 package org.ossreviewtoolkit.plugins.scanners.dos
 
 import org.ossreviewtoolkit.plugins.api.OrtPluginOption
+import org.ossreviewtoolkit.plugins.api.Secret
 
 /**
  * This is the configuration class for DOS Scanner.
@@ -29,7 +30,7 @@ data class DosScannerConfig(
     val url: String,
 
     /** The secret token to use with the DOS backend. */
-    val token: String,
+    val token: Secret,
 
     /** The timeout for communicating with the DOS backend, in seconds. */
     val timeout: Long?,
@@ -37,10 +38,6 @@ data class DosScannerConfig(
     /** Interval (in seconds) to use for polling scanjob status from DOS API. **/
     @OrtPluginOption(defaultValue = "5")
     val pollInterval: Long,
-
-    /** Use license conclusions as detected licenses when they exist? **/
-    @OrtPluginOption(defaultValue = "false")
-    val fetchConcluded: Boolean,
 
     /** The URL where the DOS / package curation front-end is running. **/
     @OrtPluginOption(defaultValue = "http://localhost:3000")

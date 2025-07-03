@@ -24,9 +24,9 @@ import java.io.IOException
 
 import org.apache.logging.log4j.kotlin.logger
 
-import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
 import org.ossreviewtoolkit.analyzer.PackageManager.Companion.processPackageVcs
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.Identifier
@@ -39,9 +39,11 @@ import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
-import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.orEmpty
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.collectMessages
@@ -49,8 +51,8 @@ import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.stashDirectories
 import org.ossreviewtoolkit.utils.ort.showStackTrace
 
-import org.semver4j.RangesList
-import org.semver4j.RangesListFactory
+import org.semver4j.range.RangeList
+import org.semver4j.range.RangeListFactory
 
 private const val COMPOSER_PHAR_BINARY = "composer.phar"
 private const val SCOPE_NAME_REQUIRE = "require"
@@ -69,37 +71,31 @@ internal object ComposerCommand : CommandLineTool {
             }
         }
 
-    override fun getVersionArguments() = "--no-ansi --version"
-
     override fun transformVersion(output: String) =
         // The version string can be something like:
         // Composer version 1.5.1 2017-08-09 16:07:22
         // Composer version @package_branch_alias_version@ (1.0.0-beta2) 2016-03-27 16:00:34
         output.splitOnWhitespace().dropLast(2).last().removeSurrounding("(", ")")
 
-    override fun getVersionRequirement(): RangesList = RangesListFactory.create(">=1.5")
+    override fun getVersionRequirement(): RangeList = RangeListFactory.create(">=1.5")
 }
 
 /**
  * The [Composer](https://getcomposer.org/) package manager for PHP.
  */
-class Composer(
-    name: String,
-    analysisRoot: File,
-    analyzerConfig: AnalyzerConfiguration,
-    repoConfig: RepositoryConfiguration
-) : PackageManager(name, "Composer", analysisRoot, analyzerConfig, repoConfig) {
-    class Factory : AbstractPackageManagerFactory<Composer>("Composer") {
-        override val globsForDefinitionFiles = listOf("composer.json")
+@OrtPlugin(
+    displayName = "Composer",
+    description = "The Composer package manager for PHP.",
+    factory = PackageManagerFactory::class
+)
+class Composer(override val descriptor: PluginDescriptor = ComposerFactory.descriptor) : PackageManager("Composer") {
+    override val globsForDefinitionFiles = listOf("composer.json")
 
-        override fun create(
-            analysisRoot: File,
-            analyzerConfig: AnalyzerConfiguration,
-            repoConfig: RepositoryConfiguration
-        ) = Composer(type, analysisRoot, analyzerConfig, repoConfig)
-    }
-
-    override fun beforeResolution(definitionFiles: List<File>) {
+    override fun beforeResolution(
+        analysisRoot: File,
+        definitionFiles: List<File>,
+        analyzerConfig: AnalyzerConfiguration
+    ) {
         // If all directories we are analyzing contain a composer.phar, no global installation of Composer is required
         // and hence we skip the version check.
         if (definitionFiles.all { File(it.parentFile, COMPOSER_PHAR_BINARY).isFile }) return
@@ -109,7 +105,11 @@ class Composer(
         ComposerCommand.checkVersion()
     }
 
-    override fun mapDefinitionFiles(definitionFiles: List<File>): List<File> {
+    override fun mapDefinitionFiles(
+        analysisRoot: File,
+        definitionFiles: List<File>,
+        analyzerConfig: AnalyzerConfiguration
+    ): List<File> {
         val projectFiles = definitionFiles.toMutableList()
 
         // Ignore definition files from vendor directories that reside next to other definition files, to avoid the
@@ -124,14 +124,20 @@ class Composer(
         return projectFiles
     }
 
-    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
+    override fun resolveDependencies(
+        analysisRoot: File,
+        definitionFile: File,
+        excludes: Excludes,
+        analyzerConfig: AnalyzerConfiguration,
+        labels: Map<String, String>
+    ): List<ProjectAnalyzerResult> {
         val workingDir = definitionFile.parentFile
 
         val projectPackageInfo = parsePackageInfo(definitionFile.readText())
         val hasDependencies = projectPackageInfo.require.isNotEmpty()
 
         if (!hasDependencies) {
-            val project = parseProject(definitionFile, scopes = emptySet())
+            val project = parseProject(analysisRoot, definitionFile, scopes = emptySet())
             val result = ProjectAnalyzerResult(project, packages = emptySet())
 
             return listOf(result)
@@ -140,7 +146,9 @@ class Composer(
         val lockfile = stashDirectories(workingDir.resolve("vendor")).use { _ ->
             val lockfileProvider = LockfileProvider(definitionFile)
 
-            requireLockfile(workingDir) { lockfileProvider.lockfile.isFile }
+            requireLockfile(analysisRoot, workingDir, analyzerConfig.allowDynamicVersions) {
+                lockfileProvider.lockfile.isFile
+            }
 
             lockfileProvider.ensureLockfile {
                 logger.info { "Parsing lockfile at '$it'..." }
@@ -166,7 +174,7 @@ class Composer(
             Scope(scopeName, dependencies)
         }
 
-        val project = parseProject(definitionFile, scopes)
+        val project = parseProject(analysisRoot, definitionFile, scopes)
         val result = ProjectAnalyzerResult(project, packages.values.toSet())
 
         return listOf(result)
@@ -207,10 +215,7 @@ class Composer(
 
                 packageInfo.toReference(
                     issues = listOf(
-                        createAndLogIssue(
-                            source = managerName,
-                            message = "Could not resolve dependencies of '$packageName': ${e.collectMessages()}"
-                        )
+                        createAndLogIssue("Could not resolve dependencies of '$packageName': ${e.collectMessages()}")
                     )
                 )
             }
@@ -219,7 +224,7 @@ class Composer(
         return packageReferences
     }
 
-    private fun parseProject(definitionFile: File, scopes: Set<Scope>): Project {
+    private fun parseProject(analysisRoot: File, definitionFile: File, scopes: Set<Scope>): Project {
         logger.info { "Parsing project metadata from '$definitionFile'..." }
 
         val pkgInfo = parsePackageInfo(definitionFile.readText())

@@ -26,6 +26,8 @@ rootProject.name = "oss-review-toolkit"
 include(":advisor")
 include(":analyzer")
 include(":cli")
+include(":cli-helper")
+include(":cli-test-launcher")
 include(":clients:bazel-module-registry")
 include(":clients:clearly-defined")
 include(":clients:dos")
@@ -36,7 +38,6 @@ include(":clients:vulnerable-code")
 include(":detekt-rules")
 include(":downloader")
 include(":evaluator")
-include(":helper-cli")
 include(":model")
 include(":notifier")
 include(":reporter")
@@ -46,7 +47,9 @@ include(":utils:config")
 include(":utils:ort")
 include(":utils:scripting")
 include(":utils:spdx")
+include(":utils:spdx-document")
 include(":utils:test")
+include(":version-catalog")
 
 project(":clients:bazel-module-registry").name = "bazel-module-registry-client"
 project(":clients:clearly-defined").name = "clearly-defined-client"
@@ -95,5 +98,5 @@ pluginManagement {
 
 plugins {
     // Gradle cannot access the version catalog from here, so hard-code the dependency.
-    id("org.gradle.toolchains.foojay-resolver-convention").version("0.9.0")
+    id("org.gradle.toolchains.foojay-resolver-convention").version("1.0.0")
 }

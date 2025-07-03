@@ -382,12 +382,12 @@ packages:
       algorithm: "SHA-256"
   vcs:
     type: "Git"
-    url: ""
+    url: "https://github.com/bazelbuild/rules_cc"
     revision: ""
     path: ""
   vcs_processed:
     type: "Git"
-    url: ""
+    url: "https://github.com/bazelbuild/rules_cc.git"
     revision: ""
     path: ""
 - id: "Bazel::rules_cuda:0.1.1"
@@ -578,7 +578,7 @@ packages:
   declared_licenses: []
   declared_licenses_processed: {}
   description: ""
-  homepage_url: "https://github.com/bazelbuild/rules_python"
+  homepage_url: "https://github.com/bazel-contrib/rules_python"
   binary_artifact:
     url: ""
     hash:

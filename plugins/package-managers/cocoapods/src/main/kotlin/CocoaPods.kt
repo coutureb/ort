@@ -21,8 +21,10 @@ package org.ossreviewtoolkit.plugins.packagemanagers.cocoapods
 
 import java.io.File
 
-import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
+import kotlin.io.resolveSibling
+
 import org.ossreviewtoolkit.analyzer.PackageManager
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManagerResult
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.Identifier
@@ -31,15 +33,17 @@ import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.ProjectAnalyzerResult
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
-import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.stashDirectories
 
-import org.semver4j.RangesList
-import org.semver4j.RangesListFactory
+import org.semver4j.range.RangeList
+import org.semver4j.range.RangeListFactory
 
 private const val LOCKFILE_FILENAME = "Podfile.lock"
 private const val SCOPE_NAME = "dependencies"
@@ -47,7 +51,7 @@ private const val SCOPE_NAME = "dependencies"
 internal object CocoaPodsCommand : CommandLineTool {
     override fun command(workingDir: File?) = if (Os.isWindows) "pod.bat" else "pod"
 
-    override fun getVersionRequirement(): RangesList = RangesListFactory.create(">=1.11.0")
+    override fun getVersionRequirement(): RangeList = RangeListFactory.create(">=1.11.0")
 
     override fun getVersionArguments() = "--version --allow-root"
 }
@@ -63,35 +67,37 @@ internal object CocoaPodsCommand : CommandLineTool {
  * The only interactions with the 'pod' command happen in order to obtain metadata for dependencies. Therefore,
  * 'pod spec which' gets executed, which works also under Linux.
  */
-class CocoaPods(
-    name: String,
-    analysisRoot: File,
-    analyzerConfig: AnalyzerConfiguration,
-    repoConfig: RepositoryConfiguration
-) : PackageManager(name, "CocoaPods", analysisRoot, analyzerConfig, repoConfig) {
-    class Factory : AbstractPackageManagerFactory<CocoaPods>("CocoaPods") {
-        override val globsForDefinitionFiles = listOf("Podfile")
-
-        override fun create(
-            analysisRoot: File,
-            analyzerConfig: AnalyzerConfiguration,
-            repoConfig: RepositoryConfiguration
-        ) = CocoaPods(type, analysisRoot, analyzerConfig, repoConfig)
-    }
+@OrtPlugin(
+    displayName = "CocoaPods",
+    description = "The CocoaPods package manager for Objective-C.",
+    factory = PackageManagerFactory::class
+)
+class CocoaPods(override val descriptor: PluginDescriptor = CocoaPodsFactory.descriptor) : PackageManager("CocoaPods") {
+    override val globsForDefinitionFiles = listOf("Podfile")
 
     private val dependencyHandler = PodDependencyHandler()
     private val graphBuilder = DependencyGraphBuilder(dependencyHandler)
 
-    override fun beforeResolution(definitionFiles: List<File>) = CocoaPodsCommand.checkVersion()
+    override fun beforeResolution(
+        analysisRoot: File,
+        definitionFiles: List<File>,
+        analyzerConfig: AnalyzerConfiguration
+    ) = CocoaPodsCommand.checkVersion()
 
-    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> =
+    override fun resolveDependencies(
+        analysisRoot: File,
+        definitionFile: File,
+        excludes: Excludes,
+        analyzerConfig: AnalyzerConfiguration,
+        labels: Map<String, String>
+    ): List<ProjectAnalyzerResult> =
         stashDirectories(Os.userHomeDirectory.resolve(".cocoapods/repos")).use {
             // Ensure to use the CDN instead of the monolithic specs repo.
             CocoaPodsCommand.run("repo", "add-cdn", "trunk", "https://cdn.cocoapods.org", "--allow-root")
                 .requireSuccess()
 
             try {
-                resolveDependenciesInternal(definitionFile)
+                resolveDependenciesInternal(analysisRoot, definitionFile)
             } finally {
                 // The cache entries are not re-usable across definition files because the keys do not contain the
                 // dependency version. If non-default Specs repositories were supported, then these would also need to
@@ -101,7 +107,7 @@ class CocoaPods(
             }
         }
 
-    private fun resolveDependenciesInternal(definitionFile: File): List<ProjectAnalyzerResult> {
+    private fun resolveDependenciesInternal(analysisRoot: File, definitionFile: File): List<ProjectAnalyzerResult> {
         val workingDir = definitionFile.parentFile
         val lockfile = workingDir.resolve(LOCKFILE_FILENAME)
         val issues = mutableListOf<Issue>()
@@ -127,16 +133,26 @@ class CocoaPods(
         if (lockfile.isFile) {
             val lockfileData = lockfile.readText().parseLockfile()
 
+            // Resolve paths of external sources relative to the lockfile.
+            val lockfileWithResolvedPaths = lockfileData.withResolvedPaths(lockfile)
+
             // Convert direct dependencies with version constraints to pods with resolved versions.
-            val dependencies = lockfileData.dependencies.mapNotNull { it.resolvedPod }
+            val dependencies = lockfileWithResolvedPaths.dependencies.mapNotNull {
+                it.resolvedPod?.run {
+                    lockfileWithResolvedPaths.Pod(
+                        name,
+                        version,
+                        dependencies
+                    )
+                }
+            }
 
             graphBuilder.addDependencies(projectId, SCOPE_NAME, dependencies)
         } else {
             issues += createAndLogIssue(
-                source = managerName,
-                message = "Missing lockfile '${lockfile.relativeTo(analysisRoot).invariantSeparatorsPath}' for " +
-                    "definition file '${definitionFile.relativeTo(analysisRoot).invariantSeparatorsPath}'. The " +
-                    "analysis of a Podfile without a lockfile is not supported."
+                "Missing lockfile '${lockfile.relativeTo(analysisRoot).invariantSeparatorsPath}' for definition file " +
+                    "'${definitionFile.relativeTo(analysisRoot).invariantSeparatorsPath}'. The analysis of a Podfile " +
+                    "without a lockfile is not supported."
             )
         }
 
@@ -145,4 +161,44 @@ class CocoaPods(
 
     override fun createPackageManagerResult(projectResults: Map<File, List<ProjectAnalyzerResult>>) =
         PackageManagerResult(projectResults, graphBuilder.build(), graphBuilder.packages())
+}
+
+/**
+ * Return a new [Lockfile] instance with all external source paths resolved relative to the given [lockfilePath].
+ */
+internal fun Lockfile.withResolvedPaths(lockfilePath: File): Lockfile {
+    val resolvedExternalSources = externalSources.mapValues { entry ->
+        Lockfile.ExternalSource(
+            entry.value.path?.let { lockfilePath.resolveSibling(it).path },
+            entry.value.podspec?.let { lockfilePath.resolveSibling(it).path }
+        )
+    }
+
+    val pods = mutableListOf<Lockfile.Pod>()
+    val dependencies = mutableListOf<Lockfile.Dependency>()
+
+    val lockFile = Lockfile(pods, dependencies, resolvedExternalSources, checkoutOptions)
+
+    this.pods.forEach { pod ->
+        val resolvedPod = lockFile.Pod(
+            pod.name,
+            pod.version,
+            pod.dependencies.map { dependency ->
+                lockFile.Dependency(
+                    dependency.name,
+                    dependency.versionConstraint
+                )
+            }
+        )
+
+        pods += resolvedPod
+    }
+
+    this.dependencies.forEach { dependency ->
+        val resolvedDependency = lockFile.Dependency(dependency.name, dependency.versionConstraint)
+
+        dependencies += resolvedDependency
+    }
+
+    return lockFile
 }

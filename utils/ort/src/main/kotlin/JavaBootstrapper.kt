@@ -45,7 +45,7 @@ import org.ossreviewtoolkit.utils.common.unpack
 import org.semver4j.Semver
 
 object JavaBootstrapper {
-    private val discoClient by lazy { DiscoClient(Environment.ORT_USER_AGENT) }
+    private val discoClient by lazy { DiscoClient(ORT_USER_AGENT) }
 
     /**
      * Return the single top-level directory contained in this directory, if any, or return this directory otherwise.
@@ -105,7 +105,7 @@ object JavaBootstrapper {
             Match.ANY
         )
 
-        val pkg = pkgs.sortedBy { it.id }.find { it.distributionName == distributionName }
+        val pkg = pkgs.sortedBy { it.id }.find { it.distribution?.name == distributionName }
             ?: return Result.failure(
                 IllegalArgumentException(
                     "No JDK package for distribution '$distributionName' in version '$version' found for bootstrapping."

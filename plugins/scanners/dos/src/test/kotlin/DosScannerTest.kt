@@ -49,8 +49,10 @@ import org.ossreviewtoolkit.model.RepositoryProvenance
 import org.ossreviewtoolkit.model.Severity
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
+import org.ossreviewtoolkit.plugins.api.Secret
 import org.ossreviewtoolkit.scanner.ScanContext
 import org.ossreviewtoolkit.scanner.provenance.NestedProvenance
+import org.ossreviewtoolkit.utils.test.readResource
 
 class DosScannerTest : StringSpec({
     lateinit var scanner: DosScanner
@@ -59,17 +61,14 @@ class DosScannerTest : StringSpec({
         WireMockConfiguration.options().dynamicPort().notifier(ConsoleNotifier(false))
     )
 
-    fun getResourceAsString(resourceName: String): String = checkNotNull(javaClass.getResource(resourceName)).readText()
-
     beforeTest {
         server.start()
 
         scanner = DosScannerFactory.create(
             url = "http://localhost:${server.port()}/api/",
-            token = "",
+            token = Secret(""),
             timeout = 60L,
             pollInterval = 5L,
-            fetchConcluded = false,
             frontendUrl = "http://localhost:3000"
         )
     }
@@ -87,7 +86,7 @@ class DosScannerTest : StringSpec({
                 )
         )
 
-        scanner.client.getScanResults(emptyList(), false) shouldBe null
+        scanner.client.getScanResults(emptyList()) shouldBe null
     }
 
     "getScanResults() should return 'no-results' when no results in db" {
@@ -96,7 +95,7 @@ class DosScannerTest : StringSpec({
                 .willReturn(
                     aResponse()
                         .withStatus(200)
-                        .withBody(getResourceAsString("/no-results.json"))
+                        .withBody(readResource("/no-results.json"))
                 )
         )
 
@@ -106,8 +105,7 @@ class DosScannerTest : StringSpec({
                     purl = "purl",
                     declaredLicenseExpressionSPDX = null
                 )
-            ),
-            false
+            )
         )?.state?.status
 
         status shouldBe "no-results"
@@ -119,7 +117,7 @@ class DosScannerTest : StringSpec({
                 .willReturn(
                     aResponse()
                         .withStatus(200)
-                        .withBody(getResourceAsString("/pending.json"))
+                        .withBody(readResource("/pending.json"))
                 )
         )
 
@@ -129,8 +127,7 @@ class DosScannerTest : StringSpec({
                     purl = "purl",
                     declaredLicenseExpressionSPDX = null
                 )
-            ),
-            false
+            )
         )
 
         response?.state?.status shouldBe "pending"
@@ -143,7 +140,7 @@ class DosScannerTest : StringSpec({
                 .willReturn(
                     aResponse()
                         .withStatus(200)
-                        .withBody(getResourceAsString("/ready.json"))
+                        .withBody(readResource("/ready.json"))
                 )
         )
 
@@ -153,12 +150,11 @@ class DosScannerTest : StringSpec({
                     purl = "purl",
                     declaredLicenseExpressionSPDX = null
                 )
-            ),
-            false
+            )
         )
 
         val actualJson = JSON.encodeToString(response?.results)
-        val expectedJson = JSON.decodeFromString<ScanResultsResponseBody>(getResourceAsString("/ready.json")).let {
+        val expectedJson = JSON.decodeFromString<ScanResultsResponseBody>(readResource("/ready.json")).let {
             JSON.encodeToString(it.results)
         }
 
@@ -209,7 +205,7 @@ class DosScannerTest : StringSpec({
                 .willReturn(
                     aResponse()
                         .withStatus(200)
-                        .withBody(getResourceAsString("/ready.json"))
+                        .withBody(readResource("/ready.json"))
                 )
         )
 
@@ -251,7 +247,7 @@ class DosScannerTest : StringSpec({
                 .willReturn(
                     aResponse()
                         .withStatus(200)
-                        .withBody(getResourceAsString("/no-results.json"))
+                        .withBody(readResource("/no-results.json"))
                 )
         )
 

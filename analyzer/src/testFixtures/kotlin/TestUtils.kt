@@ -19,9 +19,7 @@
 
 package org.ossreviewtoolkit.analyzer
 
-import io.kotest.inspectors.forAll
 import io.kotest.matchers.collections.shouldBeSingleton
-import io.kotest.matchers.collections.shouldHaveAtLeastSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 
 import java.io.File
@@ -41,13 +39,24 @@ import org.ossreviewtoolkit.model.config.PackageManagerConfiguration
 import org.ossreviewtoolkit.model.config.RepositoryConfiguration
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
+import org.ossreviewtoolkit.plugins.api.PluginConfig
 import org.ossreviewtoolkit.utils.test.USER_DIR
 
-fun PackageManager.resolveSingleProject(definitionFile: File, resolveScopes: Boolean = false): ProjectAnalyzerResult {
+fun PackageManager.resolveSingleProject(
+    definitionFile: File,
+    excludedScopes: Collection<String> = emptySet(),
+    allowDynamicVersions: Boolean = false,
+    resolveScopes: Boolean = false
+): ProjectAnalyzerResult {
     val definitionFiles = listOf(definitionFile)
+    val analyzerConfig = AnalyzerConfiguration(allowDynamicVersions = allowDynamicVersions)
 
-    beforeResolution(definitionFiles)
-    val managerResult = resolveDependencies(definitionFiles, emptyMap())
+    beforeResolution(USER_DIR, definitionFiles, analyzerConfig)
+
+    val excludes = Excludes(scopes = excludedScopes.map { ScopeExclude(it, ScopeExcludeReason.TEST_DEPENDENCY_OF) })
+    val managerResult = resolveDependencies(USER_DIR, definitionFiles, excludes, analyzerConfig, emptyMap())
+
+    afterResolution(USER_DIR, definitionFiles)
 
     val resultList = managerResult.projectResults[definitionFile]
     resultList.shouldNotBeNull()
@@ -57,31 +66,7 @@ fun PackageManager.resolveSingleProject(definitionFile: File, resolveScopes: Boo
         if (resolveScopes) managerResult.resolveScopes(it) else it
     }
 
-    afterResolution(definitionFiles)
-
     return result
-}
-
-/**
- * Resolve the dependencies of all [definitionFiles] which should create at least one project. All created projects will
- * be collated in an [AnalyzerResult] with their dependency graph.
- */
-fun PackageManager.collateMultipleProjects(vararg definitionFiles: File): AnalyzerResult {
-    val managerResult = resolveDependencies(definitionFiles.asList(), emptyMap())
-
-    val builder = AnalyzerResultBuilder()
-    managerResult.dependencyGraph?.also {
-        builder.addDependencyGraph(managerName, it).addPackages(managerResult.sharedPackages)
-    }
-
-    definitionFiles.forAll { definitionFile ->
-        managerResult.projectResults[definitionFile] shouldNotBeNull {
-            this shouldHaveAtLeastSize 1
-            forEach { builder.addResult(it) }
-        }
-    }
-
-    return builder.build()
 }
 
 /**
@@ -130,39 +115,33 @@ fun ProjectAnalyzerResult.withInvariantIssues() =
 fun analyze(
     projectDir: File,
     allowDynamicVersions: Boolean = false,
-    packageManagers: Collection<PackageManagerFactory> = PackageManagerFactory.ENABLED_BY_DEFAULT,
+    excludedScopes: Collection<String> = emptySet(),
+    skipExcluded: Boolean = false,
+    packageManagers: Collection<PackageManagerFactory> = PackageManagerFactory.ALL.values,
     packageManagerConfiguration: Map<String, PackageManagerConfiguration>? = null
 ): OrtResult {
-    val config = AnalyzerConfiguration(allowDynamicVersions, packageManagers = packageManagerConfiguration)
+    val config = AnalyzerConfiguration(
+        allowDynamicVersions,
+        enabledPackageManagers = packageManagers.map { it.descriptor.id },
+        packageManagers = packageManagerConfiguration,
+        skipExcluded = skipExcluded
+    )
+
+    val repositoryConfig = RepositoryConfiguration(
+        excludes = Excludes(
+            scopes = excludedScopes.map {
+                ScopeExclude(it, ScopeExcludeReason.TEST_DEPENDENCY_OF)
+            }
+        )
+    )
+
     val analyzer = Analyzer(config)
-    val managedFiles = analyzer.findManagedFiles(projectDir, packageManagers)
+    val managedFiles = analyzer.findManagedFiles(projectDir, packageManagers, repositoryConfig)
 
     return analyzer.analyze(managedFiles).withResolvedScopes()
 }
 
-fun create(
-    managerName: String,
-    analyzerConfig: AnalyzerConfiguration,
-    repoConfig: RepositoryConfiguration = RepositoryConfiguration()
-) = PackageManagerFactory.ALL.getValue(managerName).create(USER_DIR, analyzerConfig, repoConfig)
+fun OrtResult.getAnalyzerResult(): AnalyzerResult = checkNotNull(analyzer).result
 
-fun create(
-    managerName: String,
-    vararg options: Pair<String, String>,
-    allowDynamicVersions: Boolean = false,
-    excludedScopes: Collection<String> = emptySet()
-) = create(
-    managerName = managerName,
-    analyzerConfig = AnalyzerConfiguration(
-        allowDynamicVersions = allowDynamicVersions,
-        skipExcluded = excludedScopes.isNotEmpty(),
-        packageManagers = mapOf(
-            managerName to PackageManagerConfiguration(options = mapOf(*options))
-        )
-    ),
-    repoConfig = RepositoryConfiguration(
-        excludes = Excludes(
-            scopes = excludedScopes.map { ScopeExclude(it, ScopeExcludeReason.TEST_DEPENDENCY_OF) }
-        )
-    )
-)
+fun create(managerName: String, pluginConfig: PluginConfig) =
+    PackageManagerFactory.ALL.getValue(managerName).create(pluginConfig)

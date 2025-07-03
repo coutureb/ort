@@ -29,22 +29,24 @@ import io.kotest.matchers.string.haveSubstring
 
 import java.io.File
 
-import org.ossreviewtoolkit.analyzer.create
 import org.ossreviewtoolkit.analyzer.resolveSingleProject
 import org.ossreviewtoolkit.model.Identifier
+import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.toYaml
 import org.ossreviewtoolkit.utils.test.getAssetFile
 import org.ossreviewtoolkit.utils.test.matchExpectedResult
 
 class ComposerFunTest : StringSpec({
     "Project files from vendor directories are ignored" {
-        val projectFiles = create("Composer").mapDefinitionFiles(
+        val projectFiles = ComposerFactory.create().mapDefinitionFiles(
+            File("."),
             listOf(
                 "projectA/composer.json",
                 "projectA/vendor/dependency1/composer.json",
                 "projectB/composer.json",
                 "projectB/vendor/dependency2/composer.json"
-            ).map { File(it) }
+            ).map { File(it) },
+            AnalyzerConfiguration()
         )
 
         projectFiles.map { it.path } should containExactly(
@@ -57,14 +59,14 @@ class ComposerFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/lockfile/composer.json")
         val expectedResultFile = getAssetFile("projects/synthetic/composer-expected-output.yml")
 
-        val result = create("Composer").resolveSingleProject(definitionFile)
+        val result = ComposerFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
 
     "Error is shown when no lockfile is present" {
         val definitionFile = getAssetFile("projects/synthetic/no-lockfile/composer.json")
-        val result = create("Composer").resolveSingleProject(definitionFile)
+        val result = ComposerFactory.create().resolveSingleProject(definitionFile)
 
         with(result) {
             project.id shouldBe Identifier(
@@ -82,7 +84,7 @@ class ComposerFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/no-deps/composer.json")
         val expectedResultFile = getAssetFile("projects/synthetic/composer-expected-output-no-deps.yml")
 
-        val result = create("Composer").resolveSingleProject(definitionFile)
+        val result = ComposerFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -91,7 +93,7 @@ class ComposerFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/empty-deps/composer.json")
         val expectedResultFile = getAssetFile("projects/synthetic/composer-expected-output-no-deps.yml")
 
-        val result = create("Composer").resolveSingleProject(definitionFile)
+        val result = ComposerFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -100,7 +102,7 @@ class ComposerFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/with-provide/composer.json")
         val expectedResultFile = getAssetFile("projects/synthetic/composer-expected-output-with-provide.yml")
 
-        val result = create("Composer").resolveSingleProject(definitionFile)
+        val result = ComposerFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }
@@ -109,7 +111,7 @@ class ComposerFunTest : StringSpec({
         val definitionFile = getAssetFile("projects/synthetic/with-replace/composer.json")
         val expectedResultFile = getAssetFile("projects/synthetic/composer-expected-output-with-replace.yml")
 
-        val result = create("Composer").resolveSingleProject(definitionFile)
+        val result = ComposerFactory.create().resolveSingleProject(definitionFile)
 
         result.toYaml() should matchExpectedResult(expectedResultFile, definitionFile)
     }

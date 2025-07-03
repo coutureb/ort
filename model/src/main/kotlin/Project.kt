@@ -25,9 +25,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
 
 import org.ossreviewtoolkit.model.utils.ScopeSortedSetConverter
-import org.ossreviewtoolkit.utils.common.StringSortedSetConverter
 import org.ossreviewtoolkit.utils.ort.DeclaredLicenseProcessor
 import org.ossreviewtoolkit.utils.ort.ProcessedDeclaredLicense
+import org.ossreviewtoolkit.utils.ort.StringSortedSetConverter
 import org.ossreviewtoolkit.utils.spdx.SpdxExpression
 import org.ossreviewtoolkit.utils.spdx.SpdxOperator
 
@@ -148,22 +148,6 @@ data class Project(
     val scopes: Set<Scope> by lazy { scopeDependencies.orEmpty() }
 
     /**
-     * Return a [Project] instance that has its scope information directly available, resolved from the given [graph].
-     * This function can be used to create a fully initialized [Project] if dependency information is available in a
-     * shared [DependencyGraph]. In this case, the set with [Scope]s is constructed as a subset of the provided shared
-     * graph. Otherwise, the result is this same object.
-     */
-    fun withResolvedScopes(graph: DependencyGraph?): Project =
-        if (graph != null && scopeNames != null) {
-            copy(
-                scopeDependencies = graph.createScopes(qualifiedScopeNames()),
-                scopeNames = null
-            )
-        } else {
-            this
-        }
-
-    /**
      * Return whether the package identified by [id] is contained as a (transitive) dependency in this project.
      */
     operator fun contains(id: Identifier) = scopes.any { id in it }
@@ -188,11 +172,4 @@ data class Project(
             vcs = vcs,
             vcsProcessed = vcsProcessed
         )
-
-    /**
-     * Return a set with scope names that are qualified by this project's identifier. This is necessary when
-     * extracting the scopes of this project from a shared dependency graph.
-     */
-    private fun qualifiedScopeNames(): Set<String> =
-        scopeNames.orEmpty().map { DependencyGraph.qualifyScope(id, it) }.toSet()
 }

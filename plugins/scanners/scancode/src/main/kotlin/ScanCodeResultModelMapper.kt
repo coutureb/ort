@@ -32,6 +32,7 @@ import org.ossreviewtoolkit.model.TextLocation
 import org.ossreviewtoolkit.model.createAndLogIssue
 import org.ossreviewtoolkit.model.mapLicense
 import org.ossreviewtoolkit.model.utils.associateLicensesWithExceptions
+import org.ossreviewtoolkit.plugins.scanners.scancode.model.ScanCodeResult
 
 import org.semver4j.Semver
 
@@ -70,7 +71,7 @@ fun ScanCodeResult.toScanSummary(preferFileLicense: Boolean = false): ScanSummar
 
     if (outputFormatVersion.major > MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION) {
         issues += createAndLogIssue(
-            source = ScanCode.SCANNER_NAME,
+            source = ScanCodeFactory.descriptor.displayName,
             message = "The output format version $outputFormatVersion exceeds the supported major version " +
                 "$MAX_SUPPORTED_OUTPUT_FORMAT_MAJOR_VERSION. Results may be incomplete or incorrect.",
             severity = Severity.WARNING
@@ -85,12 +86,14 @@ fun ScanCodeResult.toScanSummary(preferFileLicense: Boolean = false): ScanSummar
 
     filesOfTypeFile.forEach { file ->
         val licensesWithoutReferences = file.licenses.filter {
-            it !is LicenseEntry.Version3 || it.fromFile == null
+            val fromFile = it.fromFile
+            fromFile == null
                 // Note that "fromFile" contains the name of the input directory, see
                 // https://github.com/aboutcode-org/scancode-toolkit/issues/3712.
-                || inputPath.resolveSibling(it.fromFile) == inputPath.resolve(file.path)
+                || inputPath.resolveSibling(fromFile) == inputPath.resolve(file.path)
+                || (inputPath.path == "." && fromFile.substringAfter('/') == file.path)
                 // Check if input is a single file.
-                || it.fromFile == inputPath.name
+                || fromFile == inputPath.name
         }
 
         // ScanCode creates separate license entries for each license in an expression. Deduplicate these by grouping by
@@ -102,9 +105,10 @@ fun ScanCodeResult.toScanSummary(preferFileLicense: Boolean = false): ScanSummar
             it.value.first()
         }
 
-        if (preferFileLicense && file is FileEntry.Version3 && file.detectedLicenseExpressionSpdx != null) {
+        val fileLicense = file.detectedLicenseExpressionSpdx
+        if (preferFileLicense && fileLicense != null) {
             licenseFindings += LicenseFinding(
-                license = file.detectedLicenseExpressionSpdx,
+                license = fileLicense,
                 location = TextLocation(
                     path = file.path,
                     startLine = licenses.minOf { it.startLine },
@@ -114,21 +118,11 @@ fun ScanCodeResult.toScanSummary(preferFileLicense: Boolean = false): ScanSummar
             )
         } else {
             licenses.mapTo(licenseFindings) { license ->
-                // ScanCode uses its own license keys as identifiers in license expressions.
-                val spdxLicenseExpression = when {
-                    license is LicenseEntry.Version3 && license.spdxLicenseExpression != null -> {
-                        license.spdxLicenseExpression
-                    }
-
-                    license is LicenseEntry.Version4 && license.licenseExpressionSpdx != null -> {
-                        license.licenseExpressionSpdx
-                    }
-
-                    else -> license.licenseExpression.mapLicense(scanCodeKeyToSpdxIdMappings)
-                }
+                val licenseExpression = license.licenseExpressionSpdx
+                    ?: license.licenseExpression.mapLicense(scanCodeKeyToSpdxIdMappings)
 
                 LicenseFinding(
-                    license = spdxLicenseExpression,
+                    license = licenseExpression,
                     location = TextLocation(
                         path = file.path,
                         startLine = license.startLine,
@@ -172,7 +166,7 @@ private fun mapScanErrors(result: ScanCodeResult): List<Issue> =
     result.files.flatMap { file ->
         file.scanErrors.map { error ->
             Issue(
-                source = ScanCode.SCANNER_NAME,
+                source = ScanCodeFactory.descriptor.displayName,
                 message = "$error (File: ${file.path})"
             )
         }

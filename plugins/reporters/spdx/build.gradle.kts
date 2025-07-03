@@ -18,6 +18,9 @@
  */
 
 plugins {
+    // Apply core plugins.
+    `java-test-fixtures`
+
     // Apply precompiled plugins.
     id("ort-plugin-conventions")
 }
@@ -30,9 +33,12 @@ dependencies {
     implementation(projects.model)
     implementation(projects.utils.commonUtils)
     implementation(projects.utils.ortUtils)
+    implementation(projects.utils.spdxDocument)
     implementation(projects.utils.spdxUtils)
 
     implementation(libs.jackson.databind)
 
-    funTestImplementation(libs.jsonSchemaValidator)
+    funTestImplementation(testFixtures(projects.plugins.reporters.spdxReporter))
+
+    testFixturesImplementation(projects.utils.testUtils)
 }

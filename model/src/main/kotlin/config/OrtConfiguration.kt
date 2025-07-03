@@ -19,10 +19,14 @@
 
 package org.ossreviewtoolkit.model.config
 
+import com.sksamuel.hoplite.ConfigException
+import com.sksamuel.hoplite.ConfigFailure
 import com.sksamuel.hoplite.ConfigLoaderBuilder
+import com.sksamuel.hoplite.Constants
 import com.sksamuel.hoplite.PropertySource
 import com.sksamuel.hoplite.addEnvironmentSource
 import com.sksamuel.hoplite.fp.getOrElse
+import com.sksamuel.hoplite.indent
 import com.sksamuel.hoplite.resolver.context.ContextResolverMode
 
 import java.io.File
@@ -164,7 +168,7 @@ data class OrtConfiguration(
                     PropertySource.map(it)
                 },
                 file?.takeIf { it.isFile }?.let {
-                    logger.info { "Using ORT configuration file '$it'." }
+                    logger.info { "Using ORT configuration file '${it.absolutePath}'." }
 
                     PropertySource.file(it)
                 }
@@ -176,24 +180,22 @@ data class OrtConfiguration(
                 .withContextResolverMode(ContextResolverMode.SkipUnresolved)
                 .build()
 
-            val configResult = loader.loadConfig<OrtConfigurationWrapper>()
-            val wrappedConfig = configResult.getOrElse { failure ->
-                require(sources.isEmpty()) {
-                    "Failed to load ORT configuration: ${failure.description()}"
+            val configResult = loader.loadConfig<OrtConfiguration>(prefix = "ort")
+            val config = configResult.getOrElse { failure ->
+                val isFailureDueToEmptyConfig = failure is ConfigFailure.UndefinedTree
+                    || (failure is ConfigFailure.MissingConfigValue && sources.isEmpty())
+
+                if (!isFailureDueToEmptyConfig) {
+                    val message = "Failed to load ORT configuration:\n${failure.description().indent(Constants.indent)}"
+                    throw ConfigException(message)
                 }
 
-                OrtConfigurationWrapper(OrtConfiguration())
+                logger.info { "All property sources were empty, falling back to the default configuration." }
+
+                OrtConfiguration()
             }
 
-            return wrappedConfig.ort
+            return config
         }
     }
 }
-
-/**
- * A wrapper class to hold an [OrtConfiguration]. This class is needed to correctly map the _ort_ prefix in
- * configuration files when they are processed by the underlying configuration library.
- */
-data class OrtConfigurationWrapper(
-    val ort: OrtConfiguration
-)

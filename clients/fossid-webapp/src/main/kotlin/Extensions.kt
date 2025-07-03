@@ -30,6 +30,7 @@ import okio.sink
 
 import org.apache.logging.log4j.kotlin.logger
 
+import org.ossreviewtoolkit.clients.fossid.model.CreateScanResponse
 import org.ossreviewtoolkit.clients.fossid.model.identification.common.LicenseMatchType
 import org.ossreviewtoolkit.clients.fossid.model.report.ReportType
 import org.ossreviewtoolkit.clients.fossid.model.report.SelectionType
@@ -92,6 +93,16 @@ suspend fun FossIdRestService.getProject(user: String, apiKey: String, projectCo
     )
 
 /**
+ * Get all projects available in this instance.
+ *
+ * The HTTP request is sent with [user] and [apiKey] as credentials.
+ */
+suspend fun FossIdRestService.listProjects(user: String, apiKey: String) =
+    listProjects(
+        PostRequestBody("list_projects", PROJECT_GROUP, user, apiKey, emptyMap())
+    )
+
+/**
  * Get the scan for the given [scanCode].
  *
  * The HTTP request is sent with [user] and [apiKey] as credentials.
@@ -149,7 +160,7 @@ suspend fun FossIdRestService.createScan(
     gitRepoUrl: String,
     gitBranch: String,
     comment: String = ""
-): MapResponseBody<String> =
+): PolymorphicDataResponseBody<CreateScanResponse> =
     createScan(
         PostRequestBody(
             "create",
@@ -283,7 +294,7 @@ suspend fun FossIdRestService.listMatchedLines(
     scanCode: String,
     path: String,
     snippetId: Int
-): EntityResponseBody<MatchedLines> {
+): PolymorphicDataResponseBody<MatchedLines> {
     val base64Path = Base64.encode(path.toByteArray())
     return listMatchedLines(
         PostRequestBody(

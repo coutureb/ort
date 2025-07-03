@@ -23,93 +23,109 @@ import java.io.File
 
 import org.apache.logging.log4j.kotlin.logger
 
-import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.model.ProjectAnalyzerResult
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
-import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
+import org.ossreviewtoolkit.plugins.packagemanagers.node.ModuleInfoResolver
 import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManager
 import org.ossreviewtoolkit.plugins.packagemanagers.node.NodePackageManagerType
-import org.ossreviewtoolkit.plugins.packagemanagers.node.PackageJson
+import org.ossreviewtoolkit.plugins.packagemanagers.node.Scope
+import org.ossreviewtoolkit.plugins.packagemanagers.node.getNames
 import org.ossreviewtoolkit.plugins.packagemanagers.node.parsePackageJson
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.DirectoryStash
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.nextOrNull
 
-import org.semver4j.RangesList
-import org.semver4j.RangesListFactory
+import org.semver4j.range.RangeList
+import org.semver4j.range.RangeListFactory
 
 internal object PnpmCommand : CommandLineTool {
     override fun command(workingDir: File?) = if (Os.isWindows) "pnpm.cmd" else "pnpm"
 
-    override fun getVersionRequirement(): RangesList = RangesListFactory.create("5.* - 9.*")
+    override fun getVersionRequirement(): RangeList = RangeListFactory.create("5.* - 9.*")
 }
 
 /**
- * The [fast, disk space efficient package manager](https://pnpm.io/).
+ * The [PNPM package manager](https://pnpm.io/).
  */
-class Pnpm(
-    name: String,
-    analysisRoot: File,
-    analyzerConfig: AnalyzerConfiguration,
-    repoConfig: RepositoryConfiguration
-) : NodePackageManager(name, NodePackageManagerType.PNPM, analysisRoot, analyzerConfig, repoConfig) {
-    class Factory : AbstractPackageManagerFactory<Pnpm>("PNPM") {
-        override val globsForDefinitionFiles = listOf(NodePackageManagerType.DEFINITION_FILE, "pnpm-lock.yaml")
-
-        override fun create(
-            analysisRoot: File,
-            analyzerConfig: AnalyzerConfiguration,
-            repoConfig: RepositoryConfiguration
-        ) = Pnpm(type, analysisRoot, analyzerConfig, repoConfig)
-    }
+@OrtPlugin(
+    id = "PNPM",
+    displayName = "PNPM",
+    description = "The PNPM package manager for Node.js.",
+    factory = PackageManagerFactory::class
+)
+class Pnpm(override val descriptor: PluginDescriptor = PnpmFactory.descriptor) :
+    NodePackageManager(NodePackageManagerType.PNPM) {
+    override val globsForDefinitionFiles = listOf(NodePackageManagerType.DEFINITION_FILE)
 
     private lateinit var stash: DirectoryStash
 
-    private val packageDetailsCache = mutableMapOf<String, PackageJson>()
-    private val handler = PnpmDependencyHandler(projectType, this::getRemotePackageDetails)
+    private val moduleInfoResolver = ModuleInfoResolver.create { workingDir, moduleId ->
+        runCatching {
+            // Note that pnpm does not actually implement the "info" subcommand itself, but just forwards to npm, see
+            // https://github.com/pnpm/pnpm/issues/5935.
+            val process = PnpmCommand.run(workingDir, "info", "--json", moduleId).requireSuccess()
+            parsePackageJson(process.stdout)
+        }.onFailure { e ->
+            logger.warn { "Error getting module info for $moduleId: ${e.message.orEmpty()}" }
+        }.getOrNull()
+    }
 
-    override val graphBuilder by lazy { DependencyGraphBuilder(handler) }
+    private val handler = PnpmDependencyHandler(moduleInfoResolver)
 
-    override fun beforeResolution(definitionFiles: List<File>) {
+    override val graphBuilder = DependencyGraphBuilder(handler)
+
+    override fun beforeResolution(
+        analysisRoot: File,
+        definitionFiles: List<File>,
+        analyzerConfig: AnalyzerConfiguration
+    ) {
+        super.beforeResolution(analysisRoot, definitionFiles, analyzerConfig)
+
         PnpmCommand.checkVersion()
 
         val directories = definitionFiles.mapTo(mutableSetOf()) { it.resolveSibling("node_modules") }
         stash = DirectoryStash(directories)
     }
 
-    override fun afterResolution(definitionFiles: List<File>) {
+    override fun afterResolution(analysisRoot: File, definitionFiles: List<File>) {
         stash.close()
     }
 
-    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
+    override fun resolveDependencies(
+        analysisRoot: File,
+        definitionFile: File,
+        excludes: Excludes,
+        analyzerConfig: AnalyzerConfiguration,
+        labels: Map<String, String>
+    ): List<ProjectAnalyzerResult> {
         val workingDir = definitionFile.parentFile
+        moduleInfoResolver.workingDir = workingDir
         installDependencies(workingDir)
 
         val workspaceModuleDirs = getWorkspaceModuleDirs(workingDir)
         handler.setWorkspaceModuleDirs(workspaceModuleDirs)
 
-        val scopes = Scope.entries.filterNot { scope -> excludes.isScopeExcluded(scope.descriptor) }
+        val scopes = Scope.entries.filterNot { scope -> scope.isExcluded(excludes) }
         val moduleInfosForScope = scopes.associateWith { scope -> listModules(workingDir, scope) }
 
         return workspaceModuleDirs.map { projectDir ->
             val packageJsonFile = projectDir.resolve(NodePackageManagerType.DEFINITION_FILE)
             val project = parseProject(packageJsonFile, analysisRoot)
 
-            val scopeNames = scopes.mapTo(mutableSetOf()) { scope ->
-                val scopeName = scope.descriptor
+            scopes.forEach { scope ->
                 val moduleInfo = moduleInfosForScope.getValue(scope).single { it.path == projectDir.absolutePath }
-
-                graphBuilder.addDependencies(project.id, scopeName, moduleInfo.getScopeDependencies(scope))
-
-                scopeName
+                graphBuilder.addDependencies(project.id, scope.descriptor, moduleInfo.getScopeDependencies(scope))
             }
 
             ProjectAnalyzerResult(
-                project = project.copy(scopeNames = scopeNames),
-                packages = emptySet(),
-                issues = emptyList()
+                project = project.copy(scopeNames = scopes.getNames()),
+                packages = emptySet()
             )
         }
     }
@@ -142,25 +158,6 @@ class Pnpm(
             "--frozen-lockfile", // Use the existing lockfile instead of updating an outdated one.
             workingDir = workingDir
         ).requireSuccess()
-
-    internal fun getRemotePackageDetails(packageName: String): PackageJson? {
-        packageDetailsCache[packageName]?.let { return it }
-
-        return runCatching {
-            val process = PnpmCommand.run("info", "--json", packageName).requireSuccess()
-
-            parsePackageJson(process.stdout)
-        }.onFailure { e ->
-            logger.warn { "Error getting details for $packageName: ${e.message.orEmpty()}" }
-        }.onSuccess {
-            packageDetailsCache[packageName] = it
-        }.getOrNull()
-    }
-}
-
-private enum class Scope(val descriptor: String) {
-    DEPENDENCIES("dependencies"),
-    DEV_DEPENDENCIES("devDependencies")
 }
 
 private fun ModuleInfo.getScopeDependencies(scope: Scope) =

@@ -31,8 +31,8 @@ import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
 import org.ossreviewtoolkit.utils.ort.createOrtTempFile
 
-import org.semver4j.RangesList
-import org.semver4j.RangesListFactory
+import org.semver4j.range.RangeList
+import org.semver4j.range.RangeListFactory
 
 private val json = Json {
     ignoreUnknownKeys = true
@@ -44,7 +44,7 @@ internal object PythonInspector : CommandLineTool {
 
     override fun transformVersion(output: String) = output.removePrefix("Python-inspector version: ")
 
-    override fun getVersionRequirement(): RangesList = RangesListFactory.create("[0.9.2,)")
+    override fun getVersionRequirement(): RangeList = RangeListFactory.create("[0.9.2,)")
 
     fun inspect(
         workingDir: File,
@@ -91,7 +91,14 @@ internal object PythonInspector : CommandLineTool {
 
         return try {
             run(workingDir, *commandLineOptions.toTypedArray()).requireSuccess()
-            outputFile.inputStream().use { json.decodeFromStream(it) }
+            val binaryResult = outputFile.inputStream().use { json.decodeFromStream<Result>(it) }
+
+            // TODO: Avoid this terrible hack to run once more with `--prefer-source` to work around
+            //       https://github.com/aboutcode-org/python-inspector/issues/229.
+            run(workingDir, *(commandLineOptions + "--prefer-source").toTypedArray()).requireSuccess()
+            val sourceResult = outputFile.inputStream().use { json.decodeFromStream<Result>(it) }
+
+            binaryResult.copy(packages = binaryResult.packages + sourceResult.packages)
         } finally {
             outputFile.parentFile.safeDeleteRecursively()
         }

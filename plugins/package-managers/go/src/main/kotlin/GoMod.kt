@@ -29,8 +29,8 @@ import kotlinx.serialization.json.decodeToSequence
 
 import org.apache.logging.log4j.kotlin.logger
 
-import org.ossreviewtoolkit.analyzer.AbstractPackageManagerFactory
 import org.ossreviewtoolkit.analyzer.PackageManager
+import org.ossreviewtoolkit.analyzer.PackageManagerFactory
 import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.Identifier
@@ -44,16 +44,18 @@ import org.ossreviewtoolkit.model.Scope
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
-import org.ossreviewtoolkit.model.config.RepositoryConfiguration
+import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.orEmpty
+import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 import org.ossreviewtoolkit.plugins.packagemanagers.go.utils.Graph
 import org.ossreviewtoolkit.utils.common.CommandLineTool
 import org.ossreviewtoolkit.utils.common.splitOnWhitespace
 import org.ossreviewtoolkit.utils.common.stashDirectories
 import org.ossreviewtoolkit.utils.ort.createOrtTempDir
 
-import org.semver4j.RangesList
-import org.semver4j.RangesListFactory
+import org.semver4j.range.RangeList
+import org.semver4j.range.RangeListFactory
 
 internal object GoCommand : CommandLineTool {
     private val goPath by lazy { createOrtTempDir() }
@@ -72,7 +74,7 @@ internal object GoCommand : CommandLineTool {
 
     override fun transformVersion(output: String) = output.removePrefix("go version go").substringBefore(' ')
 
-    override fun getVersionRequirement(): RangesList = RangesListFactory.create(">=1.21.1")
+    override fun getVersionRequirement(): RangeList = RangeListFactory.create(">=1.21.1")
 
     override fun run(vararg args: CharSequence, workingDir: File?, environment: Map<String, String>) =
         super.run(args = args, workingDir, environment + goEnvironment)
@@ -85,23 +87,19 @@ internal object GoCommand : CommandLineTool {
  * Note: The file `go.sum` is not a lockfile as Go modules already allows for reproducible builds without that file.
  * Thus, no logic for handling the [AnalyzerConfiguration.allowDynamicVersions] is needed.
  */
-class GoMod(
-    name: String,
-    analysisRoot: File,
-    analyzerConfig: AnalyzerConfiguration,
-    repoConfig: RepositoryConfiguration
-) : PackageManager(name, "GoMod", analysisRoot, analyzerConfig, repoConfig) {
-    class Factory : AbstractPackageManagerFactory<GoMod>("GoMod") {
-        override val globsForDefinitionFiles = listOf("go.mod")
+@OrtPlugin(
+    displayName = "GoMod",
+    description = "The Go Modules package manager for Go.",
+    factory = PackageManagerFactory::class
+)
+class GoMod(override val descriptor: PluginDescriptor = GoModFactory.descriptor) : PackageManager("GoMod") {
+    override val globsForDefinitionFiles = listOf("go.mod")
 
-        override fun create(
-            analysisRoot: File,
-            analyzerConfig: AnalyzerConfiguration,
-            repoConfig: RepositoryConfiguration
-        ) = GoMod(type, analysisRoot, analyzerConfig, repoConfig)
-    }
-
-    override fun mapDefinitionFiles(definitionFiles: List<File>): List<File> =
+    override fun mapDefinitionFiles(
+        analysisRoot: File,
+        definitionFiles: List<File>,
+        analyzerConfig: AnalyzerConfiguration
+    ): List<File> =
         definitionFiles.filterNot { definitionFile ->
             "vendor" in definitionFile
                 .parentFile
@@ -110,14 +108,20 @@ class GoMod(
                 .split('/')
         }
 
-    override fun resolveDependencies(definitionFile: File, labels: Map<String, String>): List<ProjectAnalyzerResult> {
+    override fun resolveDependencies(
+        analysisRoot: File,
+        definitionFile: File,
+        excludes: Excludes,
+        analyzerConfig: AnalyzerConfiguration,
+        labels: Map<String, String>
+    ): List<ProjectAnalyzerResult> {
         val projectDir = definitionFile.parentFile
 
         stashDirectories(projectDir.resolve("vendor")).use { _ ->
             val moduleInfoForModuleName = getModuleInfos(projectDir, "all").associateBy { it.path }
             val graph = getModuleGraph(projectDir, moduleInfoForModuleName)
             val packages = graph.nodes.mapNotNullTo(mutableSetOf()) {
-                moduleInfoForModuleName.getValue(it.name).toPackage()
+                moduleInfoForModuleName.getValue(it.name).toPackage(analysisRoot)
             }
 
             val projectVcs = processProjectVcs(projectDir)
@@ -128,18 +132,19 @@ class GoMod(
             val scopes = setOf(
                 Scope(
                     name = "main",
-                    dependencies = graph.subgraph(mainScopeModules).toPackageReferences(moduleInfoForModuleName)
+                    dependencies = graph.subgraph(mainScopeModules)
+                        .toPackageReferences(analysisRoot, moduleInfoForModuleName)
                 ),
                 Scope(
                     name = "vendor",
-                    dependencies = graph.toPackageReferences(moduleInfoForModuleName)
+                    dependencies = graph.toPackageReferences(analysisRoot, moduleInfoForModuleName)
                 )
             )
 
             return listOf(
                 ProjectAnalyzerResult(
                     project = Project(
-                        id = moduleInfoForModuleName.values.single { it.main }.toId(),
+                        id = moduleInfoForModuleName.values.single { it.main }.toId(analysisRoot),
                         definitionFilePath = VersionControlSystem.getPathInfo(definitionFile).path,
                         authors = emptySet(), // Go mod doesn't support author information.
                         declaredLicenses = emptySet(), // Go mod doesn't support declared licenses.
@@ -271,8 +276,8 @@ class GoMod(
         return graph.nodes.filterTo(mutableSetOf()) { it.name in vendorModuleNames }
     }
 
-    private fun ModuleInfo.toId(): Identifier {
-        if (replace != null) return replace.toId() // Apply replace directive.
+    private fun ModuleInfo.toId(analysisRoot: File): Identifier {
+        if (replace != null) return replace.toId(analysisRoot) // Apply replace directive.
 
         return if (version.isBlank()) {
             // If the version is blank, it is a project in ORT speak.
@@ -302,17 +307,17 @@ class GoMod(
         }
     }
 
-    private fun ModuleInfo.toPackage(): Package? {
+    private fun ModuleInfo.toPackage(analysisRoot: File): Package? {
         // A ModuleInfo with blank version should be represented by a Project:
         if (version.isBlank()) return null
 
         // Apply the replace directive:
-        if (replace != null) return replace.toPackage()
+        if (replace != null) return replace.toPackage(analysisRoot)
 
         val vcsInfo = toVcsInfo().orEmpty()
 
         return Package(
-            id = toId(),
+            id = toId(analysisRoot),
             authors = emptySet(), // Go mod doesn't support author information.
             declaredLicenses = emptySet(), // Go mod doesn't support declared licenses.
             description = "",
@@ -333,6 +338,7 @@ class GoMod(
      * before.
      */
     private fun Graph<GoModule>.toPackageReferences(
+        analysisRoot: File,
         moduleInfoForModuleName: Map<String, ModuleInfo>
     ): Set<PackageReference> {
         fun getPackageReference(module: GoModule): PackageReference {
@@ -341,7 +347,7 @@ class GoMod(
             }
 
             return PackageReference(
-                id = moduleInfoForModuleName.getValue(module.name).toId(),
+                id = moduleInfoForModuleName.getValue(module.name).toId(analysisRoot),
                 linkage = PackageLinkage.PROJECT_STATIC,
                 dependencies = dependencies
             )
