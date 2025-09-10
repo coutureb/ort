@@ -6,4 +6,4 @@ toolchain go1.23.7
 
 require github.com/klauspost/shutdown2 v1.1.0
 
-require golang.org/x/net v0.37.0 // indirect
+require golang.org/x/net v0.38.0 // indirect
